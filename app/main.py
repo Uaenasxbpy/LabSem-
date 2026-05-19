@@ -7,16 +7,17 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import Base, engine, get_db
-from app.models import AccessLog, Paper, Report, StoredFile
+from app.models import AccessLog, Paper, Report, StoredFile, Student
 from app.schemas import AccessLogOut, ReportOut, StudentsOut
 from app.services import (
     create_unique_report_folder,
     digest_bytes,
     ensure_storage_root,
+    find_or_create_student,
     find_pdf_hash_duplicates,
     find_title_duplicates,
     normalize_title,
@@ -47,8 +48,8 @@ def health_check():
 
 @app.get("/api/students", response_model=StudentsOut)
 def list_students(db: Session = Depends(get_db)):
-    rows = db.execute(select(Report.student_name).distinct().order_by(Report.student_name.asc())).all()
-    return {"students": [row[0] for row in rows]}
+    rows = db.query(Student).order_by(Student.name.asc()).all()
+    return {"students": rows}
 
 
 @app.post("/api/reports")
@@ -98,8 +99,11 @@ async def create_report(
 
     folder_name, folder_path = create_unique_report_folder(report_date, student_name)
 
+    student = find_or_create_student(db, student_name)
+
     report = Report(
-        student_name=student_name.strip(),
+        student_id=student.id,
+        student_name=student.name,
         report_date=report_date,
         folder_name=folder_name,
     )
@@ -175,9 +179,12 @@ def search_reports(
 
     if keyword:
         normalized_kw = normalize_title(keyword)
-        query = query.join(Paper, Paper.report_id == Report.id).filter(
-            (Paper.title_raw.contains(keyword)) | (Paper.title_normalized.contains(normalized_kw))
+        paper_exists = (
+            exists()
+            .where(Paper.report_id == Report.id)
+            .where((Paper.title_raw.contains(keyword)) | (Paper.title_normalized.contains(normalized_kw)))
         )
+        query = query.filter(paper_exists)
 
     if student_name:
         query = query.filter(Report.student_name.contains(student_name.strip()))
@@ -189,22 +196,6 @@ def search_reports(
         query = query.filter(Report.report_date <= end_date)
 
     results = query.order_by(Report.report_date.desc(), Report.id.desc()).limit(limit).all()
-
-    stale_files: list[StoredFile] = []
-    for report in results:
-        alive_files = []
-        for file_row in report.files:
-            if os.path.exists(file_row.storage_path):
-                alive_files.append(file_row)
-            else:
-                stale_files.append(file_row)
-        report.files = alive_files
-
-    if stale_files:
-        for stale in stale_files:
-            db.delete(stale)
-        db.commit()
-
     return results
 
 
@@ -262,6 +253,19 @@ def delete_report(report_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return {"ok": True, "message": "已删除整条汇报记录"}
+
+
+@app.post("/api/admin/cleanup-stale-files")
+def cleanup_stale_files(db: Session = Depends(get_db)):
+    all_files = db.query(StoredFile).all()
+    removed = 0
+    for file_row in all_files:
+        if not os.path.exists(file_row.storage_path):
+            db.delete(file_row)
+            removed += 1
+    if removed:
+        db.commit()
+    return {"ok": True, "removed": removed}
 
 
 def get_client_ip(request: Request) -> str:

@@ -1,20 +1,32 @@
 ﻿from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+
+class Student(Base):
+    __tablename__ = "students"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    reports: Mapped[list["Report"]] = relationship(back_populates="student")
 
 
 class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="RESTRICT"))
     student_name: Mapped[str] = mapped_column(String(128), index=True)
     report_date: Mapped[date] = mapped_column(Date, index=True)
     folder_name: Mapped[str] = mapped_column(String(255), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    student: Mapped["Student"] = relationship(back_populates="reports")
     papers: Mapped[list["Paper"]] = relationship(
         back_populates="report", cascade="all, delete-orphan"
     )
@@ -34,16 +46,21 @@ class Paper(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     report: Mapped["Report"] = relationship(back_populates="papers")
-    files: Mapped[list["StoredFile"]] = relationship(back_populates="paper")
+    files: Mapped[list["StoredFile"]] = relationship(
+        back_populates="paper", cascade="all, delete-orphan"
+    )
 
 
 class StoredFile(Base):
     __tablename__ = "files"
+    __table_args__ = (
+        Index("ix_files_type_hash", "file_type", "file_hash"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     report_id: Mapped[int] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"))
     paper_id: Mapped[int | None] = mapped_column(
-        ForeignKey("papers.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("papers.id", ondelete="CASCADE"), nullable=True
     )
     file_type: Mapped[str] = mapped_column(String(16), index=True)
     original_name: Mapped[str] = mapped_column(String(255))

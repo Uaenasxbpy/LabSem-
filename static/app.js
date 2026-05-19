@@ -1,4 +1,4 @@
-﻿const { createApp, reactive, ref, onMounted } = Vue;
+const { createApp, reactive, ref, onMounted } = Vue;
 const { ElMessage, ElMessageBox } = ElementPlus;
 
 createApp({
@@ -6,6 +6,7 @@ createApp({
     const uploadLoading = ref(false);
     const searchLoading = ref(false);
     const logsLoading = ref(false);
+    const cleanupLoading = ref(false);
     const students = ref([]);
     const reports = ref([]);
     const logs = ref([]);
@@ -58,7 +59,7 @@ createApp({
 
       const ext = fileExt(file.original_name);
       if (ext === "ppt" || ext === "pptx") {
-        previewHint.value = "提示：PPT/PPTX 的浏览器预览兼容性取决于本机环境，若无法显示可直接下载。";
+        previewHint.value = "PPT/PPTX 的浏览器预览兼容性取决于本机环境，若无法显示请直接下载。";
       } else {
         previewHint.value = "";
       }
@@ -264,7 +265,21 @@ createApp({
       const resp = await fetch("/api/students");
       if (!resp.ok) return;
       const data = await resp.json();
-      students.value = data.students || [];
+      students.value = (data.students || []).map(s => s.name || s);
+    };
+
+    const cleanupStaleFiles = async () => {
+      cleanupLoading.value = true;
+      try {
+        const resp = await fetch("/api/admin/cleanup-stale-files", { method: "POST" });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "清理失败");
+        ElMessage.success(`清理完成，移除了 ${data.removed} 条孤立文件记录`);
+      } catch (err) {
+        ElMessage.error(err.message || "清理失败");
+      } finally {
+        cleanupLoading.value = false;
+      }
     };
 
     const paperPdfFile = (report, paperId) =>
@@ -276,10 +291,29 @@ createApp({
       await searchReports();
     });
 
+    // SVG icon helpers (consistent stroke-width 2, 24x24 viewBox)
+    const icons = {
+      upload: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+      search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+      log: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+      user: '<circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/>',
+      calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+      folder: '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+      trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
+      file: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+      download: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+      eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+      clean: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+    };
+
+    const iconSvg = (name, size = 15) =>
+      `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[name] || ''}</svg>`;
+
     return {
       uploadLoading,
       searchLoading,
       logsLoading,
+      cleanupLoading,
       students,
       reports,
       logs,
@@ -301,8 +335,10 @@ createApp({
       searchReports,
       loadLogs,
       confirmDeleteReport,
+      cleanupStaleFiles,
       paperPdfFile,
       reportPptFile,
+      iconSvg,
     };
   },
   template: `
@@ -314,13 +350,16 @@ createApp({
         </div>
         <div class="nav">
           <button :class="{ active: activeNav === 'upload' }" @click="switchNav('upload')">
-            <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span><span class="label">文献上传</span>
+            <span class="icon" v-html="iconSvg('upload')"></span>
+            <span class="label">文献上传</span>
           </button>
           <button :class="{ active: activeNav === 'search' }" @click="switchNav('search')">
-            <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><span class="label">检索浏览</span>
+            <span class="icon" v-html="iconSvg('search')"></span>
+            <span class="label">检索浏览</span>
           </button>
           <button :class="{ active: activeNav === 'logs' }" @click="switchNav('logs')">
-            <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span><span class="label">访问日志</span>
+            <span class="icon" v-html="iconSvg('log')"></span>
+            <span class="label">访问日志</span>
           </button>
         </div>
         <div class="sidebar-footer">
@@ -334,6 +373,7 @@ createApp({
           <p>支持一次提交完整信息、重复检测拦截、按人/按标题/按日期检索。</p>
         </header>
 
+        <!-- Upload Section -->
         <section v-if="activeNav === 'upload'" class="panel">
           <div class="section-header">
             <h3>提交汇报文献</h3>
@@ -343,7 +383,9 @@ createApp({
             <el-row :gutter="12">
               <el-col :xs="24" :md="8">
                 <el-form-item label="汇报人">
-                  <el-input v-model="uploadForm.studentName" placeholder="输入学生姓名" />
+                  <el-select v-model="uploadForm.studentName" filterable allow-create placeholder="选择或输入学生姓名" style="width:100%">
+                    <el-option v-for="s in students" :key="s" :label="s" :value="s" />
+                  </el-select>
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="8">
@@ -367,7 +409,9 @@ createApp({
               <el-upload :auto-upload="false" :limit="1" accept=".pdf" :on-change="(file) => onPdfChange(index, file)" :on-remove="() => paper.file = null">
                 <el-button plain>上传 PDF</el-button>
               </el-upload>
-              <el-button type="danger" plain @click="removePaperRow(index)">删除</el-button>
+              <el-button type="danger" plain @click="removePaperRow(index)">
+                <span v-html="iconSvg('trash', 14)" style="margin-right:4px"></span>删除
+              </el-button>
             </div>
 
             <el-space>
@@ -377,6 +421,7 @@ createApp({
           </el-form>
         </section>
 
+        <!-- Search Section -->
         <section v-if="activeNav === 'search'" class="panel">
           <div class="section-header">
             <h3>检索汇报记录</h3>
@@ -401,15 +446,17 @@ createApp({
 
           <el-empty v-if="!reports.length" description="暂无数据" />
 
-          <el-card v-for="report in reports" :key="report.id" style="margin-bottom:12px">
+          <el-card v-for="report in reports" :key="report.id" style="margin-bottom:14px">
             <template #header>
               <div class="card-head">
                 <div class="meta-line">
-                  <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg><strong>{{ report.student_name }}</strong></span>
-                  <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>{{ report.report_date }}</span>
-                  <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>{{ report.folder_name }}</span>
+                  <span><span v-html="iconSvg('user', 12)"></span><strong>{{ report.student_name }}</strong></span>
+                  <span><span v-html="iconSvg('calendar', 12)"></span>{{ report.report_date }}</span>
+                  <span><span v-html="iconSvg('folder', 12)"></span>{{ report.folder_name }}</span>
                 </div>
-                <el-button type="danger" plain @click="confirmDeleteReport(report)">删除本次记录</el-button>
+                <el-button type="danger" plain @click="confirmDeleteReport(report)">
+                  <span v-html="iconSvg('trash', 14)" style="margin-right:4px"></span>删除本次记录
+                </el-button>
               </div>
             </template>
 
@@ -417,7 +464,7 @@ createApp({
               <el-table-column label="论文标题" prop="title_raw" />
               <el-table-column label="状态" width="120">
                 <template #default="scope">
-                  <el-tag :type="scope.row.duplicate_status === 'duplicate' ? 'warning' : 'success'">
+                  <el-tag :type="scope.row.duplicate_status === 'duplicate' ? 'warning' : 'success'" size="small">
                     {{ scope.row.duplicate_status === 'duplicate' ? '疑似重复' : '唯一' }}
                   </el-tag>
                 </template>
@@ -425,24 +472,28 @@ createApp({
               <el-table-column label="PDF" width="220">
                 <template #default="scope">
                   <div class="preview-actions">
-                    <a v-if="paperPdfFile(report, scope.row.id)" :href="'/api/files/' + paperPdfFile(report, scope.row.id).id + '/download'">下载 PDF</a>
-                    <el-button v-if="paperPdfFile(report, scope.row.id)" link class="preview-link-btn" @click="openPreview(paperPdfFile(report, scope.row.id))">预览</el-button>
-                    <span v-if="!paperPdfFile(report, scope.row.id)">-</span>
+                    <template v-if="paperPdfFile(report, scope.row.id)">
+                      <a :href="'/api/files/' + paperPdfFile(report, scope.row.id).id + '/download'" v-html="iconSvg('download', 14) + ' 下载'"></a>
+                      <el-button link class="preview-link-btn" @click="openPreview(paperPdfFile(report, scope.row.id))">
+                        <span v-html="iconSvg('eye', 14)" style="margin-right:3px"></span>预览
+                      </el-button>
+                    </template>
+                    <span v-else style="color:#999">-</span>
                   </div>
                 </template>
               </el-table-column>
             </el-table>
 
-            <div class="file-links" style="margin-top:10px">
+            <div class="file-links">
               <template v-if="reportPptFile(report)">
-                <a :href="'/api/files/' + reportPptFile(report).id + '/download'">下载 PPT</a>
-                
+                <a :href="'/api/files/' + reportPptFile(report).id + '/download'" v-html="iconSvg('download', 14) + ' 下载 PPT'"></a>
               </template>
-              <span v-else>无 PPT</span>
+              <span v-else style="font-size:13px;color:#999">无 PPT</span>
             </div>
           </el-card>
         </section>
 
+        <!-- Logs Section -->
         <section v-if="activeNav === 'logs'" class="panel">
           <div class="section-header">
             <h3>访问日志</h3>
@@ -460,6 +511,11 @@ createApp({
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="logsLoading" @click="loadLogs">查询日志</el-button>
+            </el-form-item>
+            <el-form-item>
+              <el-button :loading="cleanupLoading" @click="cleanupStaleFiles" plain>
+                <span v-html="iconSvg('clean', 14)" style="margin-right:4px"></span>清理孤立文件
+              </el-button>
             </el-form-item>
           </el-form>
 
@@ -483,4 +539,3 @@ createApp({
     </div>
   `,
 }).use(ElementPlus).mount("#app");
-

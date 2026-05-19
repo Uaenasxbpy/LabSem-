@@ -43,8 +43,16 @@ class ReportOut(BaseModel):
         from_attributes = True
 
 
+class StudentOut(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 class StudentsOut(BaseModel):
-    students: list[str]
+    students: list[StudentOut]
 
 
 class AccessLogOut(BaseModel):

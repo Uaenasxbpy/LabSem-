@@ -9,11 +9,22 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app import models
+from app.models import Student
 
 
 def normalize_title(title: str) -> str:
     normalized = unicodedata.normalize("NFKC", title).lower().strip()
     return re.sub(r"[\s\-_,.;:!?()\[\]{}<>/\\\"']+", "", normalized)
+
+
+def find_or_create_student(db: Session, name: str) -> Student:
+    normalized = unicodedata.normalize("NFKC", name).strip()
+    student = db.query(Student).filter(Student.name == normalized).first()
+    if not student:
+        student = Student(name=normalized)
+        db.add(student)
+        db.flush()
+    return student
 
 
 def slugify_student_name(name: str) -> str:
