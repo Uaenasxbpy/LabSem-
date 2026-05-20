@@ -1,5 +1,6 @@
 ﻿import mimetypes
 import os
+import re
 import shutil
 from datetime import date
 
@@ -275,6 +276,109 @@ def cleanup_stale_files(db: Session = Depends(get_db)):
     return {"ok": True, "removed": removed}
 
 
+@app.post("/api/admin/sync-uploads")
+def sync_uploads(db: Session = Depends(get_db)):
+    root = ensure_storage_root()
+    if not root.exists():
+        return {"ok": True, "imported": 0, "skipped": 0, "details": []}
+
+    imported = 0
+    skipped = 0
+    details = []
+
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+
+        folder_name = entry.name
+        existing = db.query(Report).filter(Report.folder_name == folder_name).first()
+        if existing:
+            skipped += 1
+            continue
+
+        match = re.match(r"^(\d{4}-\d{2}-\d{2})_(.+)$", folder_name)
+        if not match:
+            skipped += 1
+            continue
+
+        report_date_str, student_name = match.group(1), match.group(2)
+        report_date = date.fromisoformat(report_date_str)
+
+        student = find_or_create_student(db, student_name)
+
+        report = Report(
+            student_id=student.id,
+            student_name=student.name,
+            report_date=report_date,
+            folder_name=folder_name,
+        )
+        db.add(report)
+        db.flush()
+
+        paper_idx = 0
+        for f in sorted(entry.iterdir()):
+            if not f.is_file():
+                continue
+
+            suffix = f.suffix.lower()
+            file_content = f.read_bytes()
+            file_hash = digest_bytes(file_content)
+
+            if suffix == ".pdf" and f.name.startswith("paper_"):
+                paper = Paper(
+                    report_id=report.id,
+                    title_raw=f"论文 {paper_idx + 1}",
+                    title_normalized=normalize_title(f"论文 {paper_idx + 1}"),
+                    duplicate_status="unique",
+                )
+                db.add(paper)
+                db.flush()
+
+                db.add(
+                    StoredFile(
+                        report_id=report.id,
+                        paper_id=paper.id,
+                        file_type="pdf",
+                        original_name=f.name,
+                        storage_name=f.name,
+                        storage_path=str(f),
+                        file_hash=file_hash,
+                    )
+                )
+                paper_idx += 1
+
+            elif suffix in (".pptx", ".ppt"):
+                db.add(
+                    StoredFile(
+                        report_id=report.id,
+                        paper_id=None,
+                        file_type="ppt",
+                        original_name=f.name,
+                        storage_name=f.name,
+                        storage_path=str(f),
+                        file_hash=file_hash,
+                    )
+                )
+            elif suffix == ".pdf" and f.name.startswith("report_slides"):
+                db.add(
+                    StoredFile(
+                        report_id=report.id,
+                        paper_id=None,
+                        file_type="ppt",
+                        original_name=f.name,
+                        storage_name=f.name,
+                        storage_path=str(f),
+                        file_hash=file_hash,
+                    )
+                )
+
+        imported += 1
+        details.append(f"{folder_name} ({paper_idx} 篇论文)")
+
+    db.commit()
+    return {"ok": True, "imported": imported, "skipped": skipped, "details": details}
+
+
 # ---- 成员管理 ----
 
 @app.get("/api/members", response_model=MembersOut)
@@ -405,18 +509,22 @@ def list_files(db: Session = Depends(get_db)):
         .order_by(StoredFile.id.desc())
         .all()
     )
-    return [
-        {
+    result = []
+    for f in rows:
+        size = 0
+        if os.path.exists(f.storage_path):
+            size = os.path.getsize(f.storage_path)
+        result.append({
             "id": f.id,
             "original_name": f.original_name,
             "file_type": f.file_type,
+            "file_size": size,
             "report_id": f.report_id,
             "report_student_name": f.report.student_name if f.report else None,
             "report_date": f.report.report_date.isoformat() if f.report else None,
             "paper_title": f.paper.title_raw if f.paper else None,
-        }
-        for f in rows
-    ]
+        })
+    return result
 
 
 # ---- 自定义邮件发送 ----
@@ -440,7 +548,12 @@ def send_custom_email_api(req: EmailRequest, db: Session = Depends(get_db)):
 
     files = []
     if req.file_ids:
-        files = db.query(StoredFile).filter(StoredFile.id.in_(req.file_ids)).all()
+        files = (
+            db.query(StoredFile)
+            .options(joinedload(StoredFile.report))
+            .filter(StoredFile.id.in_(req.file_ids))
+            .all()
+        )
 
     result = send_custom_email(db, recipients, req.subject.strip(), req.body, files)
     if not result["ok"]:

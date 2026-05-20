@@ -3,7 +3,10 @@ import hashlib
 import os
 import re
 import smtplib
+import tempfile
 import unicodedata
+import zipfile
+from collections import defaultdict
 from datetime import date
 from difflib import SequenceMatcher
 from email.header import Header
@@ -198,6 +201,80 @@ def send_smtp_email(
     return {"ok": True, "message": f"已成功发送给 {len(recipients)} 位成员"}
 
 
+MAX_EMAIL_ATTACHMENT_SIZE = 45 * 1024 * 1024  # 45MB
+
+
+def _compress_files_by_report(files: list[models.StoredFile]) -> tuple[list[tuple[str, str]], list[str]]:
+    """按汇报记录分组压缩文件。返回 (attachments, temp_dirs_to_clean)。
+    如果压缩后仍超限，抛出 ValueError。"""
+    total_size = sum(
+        os.path.getsize(f.storage_path) for f in files if os.path.exists(f.storage_path)
+    )
+    if total_size <= MAX_EMAIL_ATTACHMENT_SIZE:
+        return [(f.storage_path, f.original_name) for f in files if os.path.exists(f.storage_path)], []
+
+    groups: dict[int, list[models.StoredFile]] = defaultdict(list)
+    for f in files:
+        groups[f.report_id].append(f)
+
+    temp_dir = tempfile.mkdtemp(prefix="labsem_mail_")
+    attachments = []
+
+    for report_id, group_files in groups.items():
+        sample = group_files[0]
+        report = sample.report
+        folder_name = report.folder_name if report else f"report_{report_id}"
+        zip_name = f"{folder_name}.zip"
+        zip_path = os.path.join(temp_dir, zip_name)
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in group_files:
+                if os.path.exists(f.storage_path):
+                    zf.write(f.storage_path, f.original_name)
+
+        attachments.append((zip_path, zip_name))
+
+    # Check if any single zip is too large
+    oversized = []
+    for zip_path, zip_name in attachments:
+        if os.path.getsize(zip_path) > MAX_EMAIL_ATTACHMENT_SIZE:
+            oversized.append(f"{zip_name}（{round(os.path.getsize(zip_path) / 1024 / 1024, 1)}MB）")
+    if oversized:
+        _cleanup_temp_dirs([temp_dir])
+        raise ValueError(
+            f"以下汇报的文件即使压缩后仍超出 45MB 限制，无法发送：{'、'.join(oversized)}。"
+            f"请检查是否有不必要的大文件。"
+        )
+
+    return attachments, [temp_dir]
+
+
+def _cleanup_temp_dirs(temp_dirs: list[str]) -> None:
+    import shutil
+    for d in temp_dirs:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _split_attachments(attachments: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
+    """将附件按 45MB 上限拆分成多批。"""
+    batches = []
+    current_batch = []
+    current_size = 0
+
+    for path, name in attachments:
+        fsize = os.path.getsize(path)
+        if current_size + fsize > MAX_EMAIL_ATTACHMENT_SIZE and current_batch:
+            batches.append(current_batch)
+            current_batch = []
+            current_size = 0
+        current_batch.append((path, name))
+        current_size += fsize
+
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
 def send_report_notification(
     db: Session,
     report: models.Report,
@@ -225,8 +302,23 @@ def send_report_notification(
         f"—— 实验室文献管理系统"
     )
 
-    attachments = [(f.storage_path, f.original_name) for f in files]
-    return send_smtp_email(config, recipients, subject, body, attachments)
+    try:
+        attachments, temp_dirs = _compress_files_by_report(files)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    batches = _split_attachments(attachments)
+    total_sent = 0
+    for i, batch in enumerate(batches):
+        batch_subject = subject if len(batches) == 1 else f"{subject}（{i + 1}/{len(batches)}）"
+        result = send_smtp_email(config, recipients, batch_subject, body, batch)
+        if not result["ok"]:
+            _cleanup_temp_dirs(temp_dirs)
+            return result
+        total_sent += len(batch)
+
+    _cleanup_temp_dirs(temp_dirs)
+    return {"ok": True, "message": f"已成功发送给 {len(recipients)} 位成员（共 {len(batches)} 封邮件）"}
 
 
 def send_custom_email(
@@ -243,5 +335,19 @@ def send_custom_email(
     if not recipients:
         return {"ok": False, "error": "收件人列表为空"}
 
-    attachments = [(f.storage_path, f.original_name) for f in files]
+    try:
+        attachments, temp_dirs = _compress_files_by_report(files)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    batches = _split_attachments(attachments)
+    for i, batch in enumerate(batches):
+        batch_subject = subject if len(batches) == 1 else f"{subject}（{i + 1}/{len(batches)}）"
+        result = send_smtp_email(config, recipients, batch_subject, body, batch)
+        if not result["ok"]:
+            _cleanup_temp_dirs(temp_dirs)
+            return result
+
+    _cleanup_temp_dirs(temp_dirs)
+    return {"ok": True, "message": f"已成功发送给 {len(recipients)} 位成员（共 {len(batches)} 封邮件）"}
     return send_smtp_email(config, recipients, subject, body, attachments)

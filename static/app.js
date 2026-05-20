@@ -7,7 +7,7 @@ createApp({
     const searchLoading = ref(false);
     const logsLoading = ref(false);
     const cleanupLoading = ref(false);
-    const notifyLoading = ref({});
+    const syncLoading = ref(false);
     const students = ref([]);
     const reports = ref([]);
     const logs = ref([]);
@@ -311,6 +311,22 @@ createApp({
       }
     };
 
+    const syncUploads = async () => {
+      syncLoading.value = true;
+      try {
+        const resp = await fetch("/api/admin/sync-uploads", { method: "POST" });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "同步失败");
+        ElMessage.success(`同步完成：导入 ${data.imported} 条，跳过 ${data.skipped} 条`);
+        await searchReports();
+        await loadStudents();
+      } catch (err) {
+        ElMessage.error(err.message || "同步失败");
+      } finally {
+        syncLoading.value = false;
+      }
+    };
+
     // ---- 成员管理 ----
 
     const loadMembers = async () => {
@@ -412,22 +428,6 @@ createApp({
         ElMessage.error(err.message || "保存失败");
       } finally {
         smtpLoading.value = false;
-      }
-    };
-
-    // ---- 发送通知 ----
-
-    const sendNotify = async (report) => {
-      notifyLoading.value = { ...notifyLoading.value, [report.id]: true };
-      try {
-        const resp = await fetch(`/api/reports/${report.id}/notify`, { method: "POST" });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.detail || "发送失败");
-        ElMessage.success(data.message || "发送成功");
-      } catch (err) {
-        ElMessage.error(err.message || "发送失败");
-      } finally {
-        notifyLoading.value = { ...notifyLoading.value, [report.id]: false };
       }
     };
 
@@ -561,12 +561,19 @@ ${nextLine}
     const iconSvg = (name, size = 15) =>
       `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[name] || ''}</svg>`;
 
+    const formatFileSize = (bytes) => {
+      if (!bytes || bytes === 0) return '';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    };
+
     return {
       uploadLoading,
       searchLoading,
       logsLoading,
       cleanupLoading,
-      notifyLoading,
+      syncLoading,
       students,
       reports,
       logs,
@@ -589,9 +596,11 @@ ${nextLine}
       loadLogs,
       confirmDeleteReport,
       cleanupStaleFiles,
+      syncUploads,
       paperPdfFile,
       reportPptFile,
       iconSvg,
+      formatFileSize,
       members,
       membersLoading,
       memberDialogVisible,
@@ -605,7 +614,6 @@ ${nextLine}
       smtpLoading,
       smtpPasswordTouched,
       saveSmtpConfig,
-      sendNotify,
       allFiles,
       composeForm,
       composeLoading,
@@ -744,14 +752,9 @@ ${nextLine}
                   <span><span v-html="iconSvg('calendar', 12)"></span>{{ report.report_date }}</span>
                   <span><span v-html="iconSvg('folder', 12)"></span>{{ report.folder_name }}</span>
                 </div>
-                <div>
-                  <el-button type="primary" plain :loading="notifyLoading[report.id]" @click="sendNotify(report)">
-                    <span v-html="iconSvg('send', 14)" style="margin-right:4px"></span>发送通知
-                  </el-button>
-                  <el-button type="danger" plain @click="confirmDeleteReport(report)">
-                    <span v-html="iconSvg('trash', 14)" style="margin-right:4px"></span>删除本次记录
-                  </el-button>
-                </div>
+                <el-button type="danger" plain @click="confirmDeleteReport(report)">
+                  <span v-html="iconSvg('trash', 14)" style="margin-right:4px"></span>删除本次记录
+                </el-button>
               </div>
             </template>
 
@@ -810,6 +813,9 @@ ${nextLine}
             <el-form-item>
               <el-button :loading="cleanupLoading" @click="cleanupStaleFiles" plain>
                 <span v-html="iconSvg('clean', 14)" style="margin-right:4px"></span>清理孤立文件
+              </el-button>
+              <el-button :loading="syncLoading" @click="syncUploads" type="success" plain>
+                <span v-html="iconSvg('folder', 14)" style="margin-right:4px"></span>同步 uploads 目录
               </el-button>
             </el-form-item>
           </el-form>
@@ -996,6 +1002,7 @@ ${nextLine}
                       <el-checkbox :label="f.id">
                         <span class="file-type-tag" :class="f.file_type">{{ f.file_type.toUpperCase() }}</span>
                         {{ f.original_name }}
+                        <span class="file-size-tag" v-if="f.file_size">{{ formatFileSize(f.file_size) }}</span>
                         <span class="file-source" v-if="f.report_student_name">（{{ f.report_student_name }} {{ f.report_date }}）</span>
                       </el-checkbox>
                     </div>

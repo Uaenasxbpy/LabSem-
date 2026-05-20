@@ -586,6 +586,16 @@ body {
   color: var(--color-foreground-secondary);
 }
 
+.file-size-tag {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--color-foreground-secondary);
+  background: var(--color-muted);
+  padding: 0 5px;
+  border-radius: 3px;
+  margin-left: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
