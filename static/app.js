@@ -7,10 +7,36 @@ createApp({
     const searchLoading = ref(false);
     const logsLoading = ref(false);
     const cleanupLoading = ref(false);
+    const notifyLoading = ref({});
     const students = ref([]);
     const reports = ref([]);
     const logs = ref([]);
     const activeNav = ref("upload");
+
+    const members = ref([]);
+    const membersLoading = ref(false);
+    const memberDialogVisible = ref(false);
+    const memberDialogMode = ref("add");
+    const memberForm = reactive({ id: null, name: "", email: "" });
+
+    const smtpConfig = reactive({ host: "", port: 465, username: "", password: "", sender_name: "", use_tls: true });
+    const smtpLoading = ref(false);
+    const smtpPasswordTouched = ref(false);
+
+    const allFiles = ref([]);
+    const composeForm = reactive({ selectedMembers: [], selectedFiles: [], subject: "", body: "" });
+    const composeLoading = ref(false);
+    const composeSelectAllMembers = ref(false);
+    const composeSelectAllFiles = ref(false);
+
+    const composeTemplate = reactive({
+      reportIds: [],
+      meetingNumber: "",
+      meetingFormat: "线下",
+      location: "",
+      extra: "",
+      nextSpeakers: [],
+    });
 
     const previewVisible = ref(false);
     const previewUrl = ref("");
@@ -71,6 +97,9 @@ createApp({
       activeNav.value = tab;
       if (tab === "search") searchReports();
       if (tab === "logs") loadLogs();
+      if (tab === "members") loadMembers();
+      if (tab === "email") loadSmtpConfig();
+      if (tab === "compose") { loadMembers(); loadAllFiles(); searchReports(); loadStudents(); }
     };
 
     const addPaperRow = () => uploadForm.papers.push({ title: "", file: null });
@@ -282,6 +311,227 @@ createApp({
       }
     };
 
+    // ---- 成员管理 ----
+
+    const loadMembers = async () => {
+      membersLoading.value = true;
+      try {
+        const resp = await fetch("/api/members");
+        if (!resp.ok) throw new Error("加载失败");
+        const data = await resp.json();
+        members.value = data.members || [];
+      } catch (err) {
+        ElMessage.error(err.message || "加载成员失败");
+      } finally {
+        membersLoading.value = false;
+      }
+    };
+
+    const openAddMember = () => {
+      memberDialogMode.value = "add";
+      memberForm.id = null;
+      memberForm.name = "";
+      memberForm.email = "";
+      memberDialogVisible.value = true;
+    };
+
+    const openEditMember = (member) => {
+      memberDialogMode.value = "edit";
+      memberForm.id = member.id;
+      memberForm.name = member.name;
+      memberForm.email = member.email;
+      memberDialogVisible.value = true;
+    };
+
+    const saveMember = async () => {
+      if (!safeTrim(memberForm.name)) return ElMessage.error("请填写姓名");
+      if (!safeTrim(memberForm.email)) return ElMessage.error("请填写邮箱");
+      const formData = new FormData();
+      formData.append("name", safeTrim(memberForm.name));
+      formData.append("email", safeTrim(memberForm.email));
+      try {
+        const url = memberDialogMode.value === "edit" ? `/api/members/${memberForm.id}` : "/api/members";
+        const method = memberDialogMode.value === "edit" ? "PUT" : "POST";
+        const resp = await fetch(url, { method, body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "保存失败");
+        ElMessage.success(memberDialogMode.value === "edit" ? "已更新" : "已添加");
+        memberDialogVisible.value = false;
+        await loadMembers();
+      } catch (err) {
+        ElMessage.error(err.message || "保存失败");
+      }
+    };
+
+    const deleteMember = async (member) => {
+      try {
+        await ElMessageBox.confirm(`确认删除成员 ${member.name}（${member.email}）？`, "删除成员", { type: "warning" });
+        const resp = await fetch(`/api/members/${member.id}`, { method: "DELETE" });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "删除失败"); }
+        ElMessage.success("已删除");
+        await loadMembers();
+      } catch (err) {
+        if (String(err).includes("cancel") || String(err).includes("close")) return;
+        ElMessage.error(err.message || "删除失败");
+      }
+    };
+
+    // ---- SMTP 配置 ----
+
+    const loadSmtpConfig = async () => {
+      try {
+        const resp = await fetch("/api/smtp-config");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        smtpConfig.host = data.host || "";
+        smtpConfig.port = data.port || 465;
+        smtpConfig.username = data.username || "";
+        smtpConfig.password = "";
+        smtpConfig.sender_name = data.sender_name || "";
+        smtpConfig.use_tls = data.use_tls !== false;
+        smtpPasswordTouched.value = false;
+      } catch {}
+    };
+
+    const saveSmtpConfig = async () => {
+      smtpLoading.value = true;
+      try {
+        const formData = new FormData();
+        formData.append("host", safeTrim(smtpConfig.host));
+        formData.append("port", String(smtpConfig.port));
+        formData.append("username", safeTrim(smtpConfig.username));
+        if (smtpPasswordTouched.value) formData.append("password", smtpConfig.password);
+        formData.append("sender_name", safeTrim(smtpConfig.sender_name));
+        formData.append("use_tls", String(smtpConfig.use_tls));
+        const resp = await fetch("/api/smtp-config", { method: "PUT", body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "保存失败");
+        ElMessage.success("SMTP配置已保存");
+        smtpPasswordTouched.value = false;
+      } catch (err) {
+        ElMessage.error(err.message || "保存失败");
+      } finally {
+        smtpLoading.value = false;
+      }
+    };
+
+    // ---- 发送通知 ----
+
+    const sendNotify = async (report) => {
+      notifyLoading.value = { ...notifyLoading.value, [report.id]: true };
+      try {
+        const resp = await fetch(`/api/reports/${report.id}/notify`, { method: "POST" });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "发送失败");
+        ElMessage.success(data.message || "发送成功");
+      } catch (err) {
+        ElMessage.error(err.message || "发送失败");
+      } finally {
+        notifyLoading.value = { ...notifyLoading.value, [report.id]: false };
+      }
+    };
+
+    // ---- 自定义邮件 ----
+
+    const loadAllFiles = async () => {
+      try {
+        const resp = await fetch("/api/files");
+        if (!resp.ok) return;
+        allFiles.value = await resp.json();
+      } catch {}
+    };
+
+    const toggleSelectAllMembers = () => {
+      if (composeSelectAllMembers.value) {
+        composeForm.selectedMembers = members.value.map(m => m.id);
+      } else {
+        composeForm.selectedMembers = [];
+      }
+    };
+
+    const toggleSelectAllFiles = () => {
+      if (composeSelectAllFiles.value) {
+        composeForm.selectedFiles = allFiles.value.map(f => f.id);
+      } else {
+        composeForm.selectedFiles = [];
+      }
+    };
+
+    const onReportSelected = (reportIds) => {
+      composeTemplate.reportIds = reportIds || [];
+      if (!reportIds || !reportIds.length) return;
+      const fileIds = [];
+      for (const rid of reportIds) {
+        const report = reports.value.find(r => r.id === rid);
+        if (report) {
+          for (const f of report.files) {
+            if (!fileIds.includes(f.id)) fileIds.push(f.id);
+          }
+        }
+      }
+      composeForm.selectedFiles = fileIds;
+      composeSelectAllFiles.value = false;
+    };
+
+    const generateEmailContent = () => {
+      const selectedReports = (composeTemplate.reportIds || []).map(id => reports.value.find(r => r.id === id)).filter(Boolean);
+      const presenters = selectedReports.length
+        ? [...new Set(selectedReports.map(r => r.student_name))].join("、")
+        : "主讲人";
+      const dateStr = selectedReports.length ? selectedReports[0].report_date : "YYYY-MM-DD";
+
+      const num = composeTemplate.meetingNumber || "X";
+      const format = composeTemplate.meetingFormat || "线下";
+      const loc = composeTemplate.location || "待定";
+      const extra = composeTemplate.extra ? `\n${composeTemplate.extra}\n` : "";
+
+      const nextSpeakers = (composeTemplate.nextSpeakers || []).filter(s => s).join("、");
+      const nextLine = nextSpeakers ? `\n    下一次研讨会主讲人为：${nextSpeakers}。\n` : "";
+
+      composeForm.subject = `第${num}次研讨会通知`;
+      composeForm.body =
+`老师和各位同学，
+
+    大家好！
+
+    第${num}次研讨会于${dateStr}进行，形式：${format}，地点：${loc}，本次研讨会主讲人为：${presenters}。
+${extra}
+    请各位提前阅读附件中的论文，届时参加讨论。
+${nextLine}
+    ——实验室文献管理系统`;
+    };
+
+    const sendComposeEmail = async () => {
+      if (!composeForm.selectedMembers.length) return ElMessage.error("请至少选择一位收件人");
+      if (!safeTrim(composeForm.subject)) return ElMessage.error("请填写邮件主题");
+      composeLoading.value = true;
+      try {
+        const resp = await fetch("/api/emails/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            member_ids: composeForm.selectedMembers,
+            file_ids: composeForm.selectedFiles,
+            subject: safeTrim(composeForm.subject),
+            body: composeForm.body,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "发送失败");
+        ElMessage.success(data.message || "发送成功");
+        composeForm.selectedMembers = [];
+        composeForm.selectedFiles = [];
+        composeForm.subject = "";
+        composeForm.body = "";
+        composeSelectAllMembers.value = false;
+        composeSelectAllFiles.value = false;
+      } catch (err) {
+        ElMessage.error(err.message || "发送失败");
+      } finally {
+        composeLoading.value = false;
+      }
+    };
+
     const paperPdfFile = (report, paperId) =>
       report.files.find((f) => f.file_type === "pdf" && f.paper_id === paperId);
     const reportPptFile = (report) => report.files.find((f) => f.file_type === "ppt");
@@ -304,6 +554,8 @@ createApp({
       download: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
       eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
       clean: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+      mail: '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+      send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
     };
 
     const iconSvg = (name, size = 15) =>
@@ -314,6 +566,7 @@ createApp({
       searchLoading,
       logsLoading,
       cleanupLoading,
+      notifyLoading,
       students,
       reports,
       logs,
@@ -339,6 +592,31 @@ createApp({
       paperPdfFile,
       reportPptFile,
       iconSvg,
+      members,
+      membersLoading,
+      memberDialogVisible,
+      memberDialogMode,
+      memberForm,
+      openAddMember,
+      openEditMember,
+      saveMember,
+      deleteMember,
+      smtpConfig,
+      smtpLoading,
+      smtpPasswordTouched,
+      saveSmtpConfig,
+      sendNotify,
+      allFiles,
+      composeForm,
+      composeLoading,
+      composeSelectAllMembers,
+      composeSelectAllFiles,
+      composeTemplate,
+      onReportSelected,
+      generateEmailContent,
+      toggleSelectAllMembers,
+      toggleSelectAllFiles,
+      sendComposeEmail,
     };
   },
   template: `
@@ -360,6 +638,18 @@ createApp({
           <button :class="{ active: activeNav === 'logs' }" @click="switchNav('logs')">
             <span class="icon" v-html="iconSvg('log')"></span>
             <span class="label">访问日志</span>
+          </button>
+          <button :class="{ active: activeNav === 'members' }" @click="switchNav('members')">
+            <span class="icon" v-html="iconSvg('user')"></span>
+            <span class="label">成员管理</span>
+          </button>
+          <button :class="{ active: activeNav === 'email' }" @click="switchNav('email')">
+            <span class="icon" v-html="iconSvg('mail')"></span>
+            <span class="label">邮件设置</span>
+          </button>
+          <button :class="{ active: activeNav === 'compose' }" @click="switchNav('compose')">
+            <span class="icon" v-html="iconSvg('send')"></span>
+            <span class="label">发送邮件</span>
           </button>
         </div>
         <div class="sidebar-footer">
@@ -454,9 +744,14 @@ createApp({
                   <span><span v-html="iconSvg('calendar', 12)"></span>{{ report.report_date }}</span>
                   <span><span v-html="iconSvg('folder', 12)"></span>{{ report.folder_name }}</span>
                 </div>
-                <el-button type="danger" plain @click="confirmDeleteReport(report)">
-                  <span v-html="iconSvg('trash', 14)" style="margin-right:4px"></span>删除本次记录
-                </el-button>
+                <div>
+                  <el-button type="primary" plain :loading="notifyLoading[report.id]" @click="sendNotify(report)">
+                    <span v-html="iconSvg('send', 14)" style="margin-right:4px"></span>发送通知
+                  </el-button>
+                  <el-button type="danger" plain @click="confirmDeleteReport(report)">
+                    <span v-html="iconSvg('trash', 14)" style="margin-right:4px"></span>删除本次记录
+                  </el-button>
+                </div>
               </div>
             </template>
 
@@ -529,6 +824,193 @@ createApp({
             <el-table-column label="文件名" prop="file_name" min-width="220" />
             <el-table-column label="类型" prop="file_type" width="80" />
           </el-table>
+        </section>
+
+        <!-- Members Section -->
+        <section v-if="activeNav === 'members'" class="panel">
+          <div class="section-header">
+            <h3>实验室成员管理</h3>
+            <p>管理实验室成员邮箱，用于文献汇报邮件通知</p>
+          </div>
+          <el-button type="primary" @click="openAddMember" style="margin-bottom:14px">
+            <span v-html="iconSvg('user', 14)" style="margin-right:4px"></span>添加成员
+          </el-button>
+          <el-table :data="members" size="small" style="width:100%" v-loading="membersLoading">
+            <el-table-column label="姓名" prop="name" width="180" />
+            <el-table-column label="邮箱" prop="email" />
+            <el-table-column label="操作" width="180">
+              <template #default="scope">
+                <el-button link type="primary" @click="openEditMember(scope.row)">编辑</el-button>
+                <el-button link type="danger" @click="deleteMember(scope.row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <el-dialog v-model="memberDialogVisible" :title="memberDialogMode === 'edit' ? '编辑成员' : '添加成员'" width="420px">
+            <el-form label-width="56px">
+              <el-form-item label="姓名">
+                <el-input v-model="memberForm.name" placeholder="成员姓名" />
+              </el-form-item>
+              <el-form-item label="邮箱">
+                <el-input v-model="memberForm.email" placeholder="member@example.com" />
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="memberDialogVisible = false">取消</el-button>
+              <el-button type="primary" @click="saveMember">保存</el-button>
+            </template>
+          </el-dialog>
+        </section>
+
+        <!-- Email Settings Section -->
+        <section v-if="activeNav === 'email'" class="panel">
+          <div class="section-header">
+            <h3>邮件发送设置</h3>
+            <p>配置 SMTP 服务器信息，用于发送文献汇报通知邮件</p>
+          </div>
+          <el-form label-width="110px" style="max-width:560px">
+            <el-form-item label="SMTP 服务器">
+              <el-input v-model="smtpConfig.host" placeholder="smtp.qq.com" />
+            </el-form-item>
+            <el-form-item label="端口">
+              <el-input-number v-model="smtpConfig.port" :min="1" :max="65535" />
+            </el-form-item>
+            <el-form-item label="用户名">
+              <el-input v-model="smtpConfig.username" placeholder="发件人邮箱地址" />
+            </el-form-item>
+            <el-form-item label="密码/授权码">
+              <el-input v-model="smtpConfig.password" type="password" show-password placeholder="留空表示不修改" @focus="smtpPasswordTouched = true" />
+            </el-form-item>
+            <el-form-item label="发件人名称">
+              <el-input v-model="smtpConfig.sender_name" placeholder="实验室文献系统" />
+            </el-form-item>
+            <el-form-item label="使用 SSL/TLS">
+              <el-switch v-model="smtpConfig.use_tls" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="smtpLoading" @click="saveSmtpConfig">保存配置</el-button>
+            </el-form-item>
+          </el-form>
+        </section>
+
+        <!-- Compose Email Section -->
+        <section v-if="activeNav === 'compose'" class="panel">
+          <div class="section-header">
+            <h3>发送邮件</h3>
+            <p>关联汇报记录，填写研讨会信息，自动生成邮件内容</p>
+          </div>
+
+          <!-- Step 1: Template Fields -->
+          <div class="compose-block">
+            <div class="compose-block-title"><strong>研讨会信息</strong></div>
+            <el-form label-width="90px">
+              <el-row :gutter="16">
+                <el-col :xs="24" :md="12">
+                  <el-form-item label="关联汇报">
+                    <el-select v-model="composeTemplate.reportIds" placeholder="可多选汇报记录" clearable multiple collapse-tags collapse-tags-tooltip style="width:100%" @change="onReportSelected">
+                      <el-option v-for="r in reports" :key="r.id" :label="r.student_name + ' - ' + r.report_date" :value="r.id" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :md="12">
+                  <el-form-item label="研讨会序号">
+                    <el-input v-model="composeTemplate.meetingNumber" placeholder="如：4" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :xs="24" :md="12">
+                  <el-form-item label="会议形式">
+                    <el-select v-model="composeTemplate.meetingFormat" style="width:100%">
+                      <el-option label="线下" value="线下" />
+                      <el-option label="线上" value="线上" />
+                      <el-option label="线下+线上" value="线下+线上" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :md="12">
+                  <el-form-item label="会议地点">
+                    <el-input v-model="composeTemplate.location" placeholder="如：网安楼329" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :xs="24" :md="12">
+                  <el-form-item label="下次主讲人">
+                    <el-select v-model="composeTemplate.nextSpeakers" placeholder="选择下次研讨会主讲人" clearable multiple filterable allow-create collapse-tags collapse-tags-tooltip style="width:100%">
+                      <el-option v-for="s in students" :key="s" :label="s" :value="s" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-form-item label="补充内容">
+                <el-input v-model="composeTemplate.extra" type="textarea" :rows="3" placeholder="可选，如需补充说明请在此填写" />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="generateEmailContent">生成邮件内容</el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <!-- Step 2: Email Content Preview -->
+          <div class="compose-block" style="margin-top:16px">
+            <div class="compose-block-title"><strong>邮件内容</strong></div>
+            <el-form label-width="56px">
+              <el-form-item label="主题">
+                <el-input v-model="composeForm.subject" placeholder="点击上方「生成邮件内容」自动填充" />
+              </el-form-item>
+              <el-form-item label="正文">
+                <el-input v-model="composeForm.body" type="textarea" :rows="14" placeholder="点击上方「生成邮件内容」自动填充，可手动修改" />
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <!-- Step 3: Recipients & Attachments -->
+          <el-row :gutter="20" style="margin-top:16px">
+            <el-col :xs="24" :md="10">
+              <div class="compose-block">
+                <div class="compose-block-title">
+                  <strong>收件人</strong>
+                  <el-checkbox v-model="composeSelectAllMembers" @change="toggleSelectAllMembers">全选</el-checkbox>
+                </div>
+                <div class="compose-list">
+                  <el-checkbox-group v-model="composeForm.selectedMembers">
+                    <div v-for="m in members" :key="m.id" class="compose-list-item">
+                      <el-checkbox :label="m.id">{{ m.name }} ({{ m.email }})</el-checkbox>
+                    </div>
+                  </el-checkbox-group>
+                  <el-empty v-if="!members.length" description="暂无成员，请先添加" :image-size="48" />
+                </div>
+              </div>
+            </el-col>
+
+            <el-col :xs="24" :md="14">
+              <div class="compose-block">
+                <div class="compose-block-title">
+                  <strong>附件</strong>
+                  <el-checkbox v-model="composeSelectAllFiles" @change="toggleSelectAllFiles">全选</el-checkbox>
+                </div>
+                <div class="compose-list">
+                  <el-checkbox-group v-model="composeForm.selectedFiles">
+                    <div v-for="f in allFiles" :key="f.id" class="compose-list-item">
+                      <el-checkbox :label="f.id">
+                        <span class="file-type-tag" :class="f.file_type">{{ f.file_type.toUpperCase() }}</span>
+                        {{ f.original_name }}
+                        <span class="file-source" v-if="f.report_student_name">（{{ f.report_student_name }} {{ f.report_date }}）</span>
+                      </el-checkbox>
+                    </div>
+                  </el-checkbox-group>
+                  <el-empty v-if="!allFiles.length" description="暂无文件" :image-size="48" />
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <div style="margin-top:16px;text-align:right">
+            <el-button type="primary" size="large" :loading="composeLoading" @click="sendComposeEmail">
+              <span v-html="iconSvg('send', 14)" style="margin-right:4px"></span>发送邮件
+            </el-button>
+          </div>
         </section>
       </main>
 

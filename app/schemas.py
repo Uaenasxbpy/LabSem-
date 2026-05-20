@@ -69,3 +69,27 @@ class AccessLogOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MemberOut(BaseModel):
+    id: int
+    name: str
+    email: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MembersOut(BaseModel):
+    members: list[MemberOut]
+
+
+class SmtpConfigOut(BaseModel):
+    id: int
+    host: str
+    port: int
+    username: str
+    password_masked: str
+    sender_name: str
+    use_tls: bool

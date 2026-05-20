@@ -86,3 +86,24 @@ class AccessLog(Base):
     report_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     paper_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     accessed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class Member(Base):
+    __tablename__ = "members"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SmtpConfig(Base):
+    __tablename__ = "smtp_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    host: Mapped[str] = mapped_column(String(255), default="")
+    port: Mapped[int] = mapped_column(default=465)
+    username: Mapped[str] = mapped_column(String(255), default="")
+    password: Mapped[str] = mapped_column(String(255), default="")
+    sender_name: Mapped[str] = mapped_column(String(128), default="")
+    use_tls: Mapped[bool] = mapped_column(default=True)

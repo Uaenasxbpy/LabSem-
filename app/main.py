@@ -3,25 +3,32 @@ import os
 import shutil
 from datetime import date
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import Base, engine, get_db
-from app.models import AccessLog, Paper, Report, StoredFile, Student
-from app.schemas import AccessLogOut, ReportOut, StudentsOut
+from app.models import AccessLog, Member, Paper, Report, SmtpConfig, StoredFile, Student
+from app.schemas import AccessLogOut, MemberOut, MembersOut, ReportOut, SmtpConfigOut, StudentsOut
 from app.services import (
     create_unique_report_folder,
+    decode_password,
     digest_bytes,
+    encode_password,
     ensure_storage_root,
     find_or_create_student,
     find_pdf_hash_duplicates,
     find_title_duplicates,
+    get_smtp_config,
+    mask_password,
     normalize_title,
     rename_for_storage,
+    send_custom_email,
+    send_report_notification,
     store_file,
 )
 
@@ -266,6 +273,179 @@ def cleanup_stale_files(db: Session = Depends(get_db)):
     if removed:
         db.commit()
     return {"ok": True, "removed": removed}
+
+
+# ---- 成员管理 ----
+
+@app.get("/api/members", response_model=MembersOut)
+def list_members(db: Session = Depends(get_db)):
+    rows = db.query(Member).order_by(Member.name.asc()).all()
+    return {"members": rows}
+
+
+@app.post("/api/members", response_model=MemberOut)
+def create_member(name: str = Form(..., min_length=1), email: str = Form(..., min_length=3), db: Session = Depends(get_db)):
+    name = name.strip()
+    email = email.strip().lower()
+    if db.query(Member).filter(Member.email == email).first():
+        raise HTTPException(status_code=400, detail="该邮箱已存在")
+    member = Member(name=name, email=email)
+    db.add(member)
+    db.commit()
+    db.refresh(member)
+    return member
+
+
+@app.put("/api/members/{member_id}", response_model=MemberOut)
+def update_member(member_id: int, name: str = Form(..., min_length=1), email: str = Form(..., min_length=3), db: Session = Depends(get_db)):
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    email = email.strip().lower()
+    existing = db.query(Member).filter(Member.email == email, Member.id != member_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该邮箱已被其他成员使用")
+    member.name = name.strip()
+    member.email = email
+    db.commit()
+    db.refresh(member)
+    return member
+
+
+@app.delete("/api/members/{member_id}")
+def delete_member(member_id: int, db: Session = Depends(get_db)):
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    db.delete(member)
+    db.commit()
+    return {"ok": True}
+
+
+# ---- SMTP 配置 ----
+
+@app.get("/api/smtp-config", response_model=SmtpConfigOut)
+def get_smtp_config_api(db: Session = Depends(get_db)):
+    config = get_smtp_config(db)
+    if not config:
+        return SmtpConfigOut(id=0, host="", port=465, username="", password_masked="", sender_name="", use_tls=True)
+    return SmtpConfigOut(
+        id=config.id,
+        host=config.host,
+        port=config.port,
+        username=config.username,
+        password_masked=mask_password(config.password),
+        sender_name=config.sender_name,
+        use_tls=config.use_tls,
+    )
+
+
+@app.put("/api/smtp-config", response_model=SmtpConfigOut)
+def update_smtp_config_api(
+    host: str = Form(default=""),
+    port: int = Form(default=465),
+    username: str = Form(default=""),
+    password: str = Form(default=""),
+    sender_name: str = Form(default=""),
+    use_tls: bool = Form(default=True),
+    db: Session = Depends(get_db),
+):
+    config = get_smtp_config(db)
+    if not config:
+        config = SmtpConfig(id=1)
+        db.add(config)
+    config.host = host.strip()
+    config.port = port
+    config.username = username.strip()
+    if password:
+        config.password = encode_password(password)
+    config.sender_name = sender_name.strip()
+    config.use_tls = use_tls
+    db.commit()
+    db.refresh(config)
+    return SmtpConfigOut(
+        id=config.id,
+        host=config.host,
+        port=config.port,
+        username=config.username,
+        password_masked=mask_password(config.password),
+        sender_name=config.sender_name,
+        use_tls=config.use_tls,
+    )
+
+
+# ---- 邮件通知 ----
+
+@app.post("/api/reports/{report_id}/notify")
+def notify_report(report_id: int, db: Session = Depends(get_db)):
+    report = (
+        db.query(Report)
+        .options(joinedload(Report.papers), joinedload(Report.files))
+        .filter(Report.id == report_id)
+        .first()
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="汇报记录不存在")
+
+    members = db.query(Member).all()
+    recipients = [m.email for m in members]
+    result = send_report_notification(db, report, list(report.papers), list(report.files), recipients)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+# ---- 文件列表（用于附件选择） ----
+
+@app.get("/api/files")
+def list_files(db: Session = Depends(get_db)):
+    rows = (
+        db.query(StoredFile)
+        .options(joinedload(StoredFile.report), joinedload(StoredFile.paper))
+        .order_by(StoredFile.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": f.id,
+            "original_name": f.original_name,
+            "file_type": f.file_type,
+            "report_id": f.report_id,
+            "report_student_name": f.report.student_name if f.report else None,
+            "report_date": f.report.report_date.isoformat() if f.report else None,
+            "paper_title": f.paper.title_raw if f.paper else None,
+        }
+        for f in rows
+    ]
+
+
+# ---- 自定义邮件发送 ----
+
+class EmailRequest(BaseModel):
+    member_ids: list[int]
+    file_ids: list[int]
+    subject: str
+    body: str
+
+
+@app.post("/api/emails/send")
+def send_custom_email_api(req: EmailRequest, db: Session = Depends(get_db)):
+    if not req.subject.strip():
+        raise HTTPException(status_code=400, detail="邮件主题不能为空")
+
+    members = db.query(Member).filter(Member.id.in_(req.member_ids)).all()
+    recipients = [m.email for m in members]
+    if not recipients:
+        raise HTTPException(status_code=400, detail="未选择收件人")
+
+    files = []
+    if req.file_ids:
+        files = db.query(StoredFile).filter(StoredFile.id.in_(req.file_ids)).all()
+
+    result = send_custom_email(db, recipients, req.subject.strip(), req.body, files)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
 
 
 def get_client_ip(request: Request) -> str:

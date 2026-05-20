@@ -9,7 +9,7 @@
       DATABASE_URL: sqlite:///./data/literature.db
       UPLOAD_DIR: /app/uploads
     ports:
-      - "10.122.200.71:20766:8000"
+      - "20766:8000"
     volumes:
       - ./uploads:/app/uploads
       - ./data:/app/data

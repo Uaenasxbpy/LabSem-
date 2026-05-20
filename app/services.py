@@ -1,15 +1,22 @@
-﻿import hashlib
+﻿import base64
+import hashlib
 import os
 import re
+import smtplib
 import unicodedata
 from datetime import date
 from difflib import SequenceMatcher
+from email.header import Header
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formataddr
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from app import models
-from app.models import Student
+from app.models import SmtpConfig, Student
 
 
 def normalize_title(title: str) -> str:
@@ -128,3 +135,113 @@ def find_pdf_hash_duplicates(db: Session, file_hash: str) -> list[dict]:
             }
         )
     return duplicates
+
+
+def encode_password(plain: str) -> str:
+    return base64.b64encode(plain.encode("utf-8")).decode("ascii")
+
+
+def decode_password(encoded: str) -> str:
+    try:
+        return base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+    except Exception:
+        return encoded
+
+
+def mask_password(_: str) -> str:
+    return "******"
+
+
+def get_smtp_config(db: Session) -> SmtpConfig | None:
+    return db.query(SmtpConfig).filter(SmtpConfig.id == 1).first()
+
+
+def send_smtp_email(
+    config: SmtpConfig,
+    recipients: list[str],
+    subject: str,
+    body: str,
+    attachment_paths: list[tuple[str, str]] | None = None,
+) -> dict:
+    """发送邮件。attachment_paths = [(storage_path, original_name), ...]"""
+    msg = MIMEMultipart()
+    if config.sender_name:
+        msg["From"] = formataddr((str(Header(config.sender_name, "utf-8")), config.username))
+    else:
+        msg["From"] = config.username
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    for storage_path, original_name in (attachment_paths or []):
+        if not os.path.exists(storage_path):
+            continue
+        with open(storage_path, "rb") as f:
+            part = MIMEApplication(f.read(), Name=original_name)
+        part["Content-Disposition"] = f'attachment; filename="{original_name}"'
+        msg.attach(part)
+
+    password = decode_password(config.password)
+
+    try:
+        if config.use_tls:
+            server = smtplib.SMTP_SSL(config.host, config.port, timeout=30)
+        else:
+            server = smtplib.SMTP(config.host, config.port, timeout=30)
+            server.starttls()
+        server.login(config.username, password)
+        server.sendmail(config.username, recipients, msg.as_string())
+        server.quit()
+    except Exception as e:
+        return {"ok": False, "error": f"邮件发送失败: {e}"}
+
+    return {"ok": True, "message": f"已成功发送给 {len(recipients)} 位成员"}
+
+
+def send_report_notification(
+    db: Session,
+    report: models.Report,
+    papers: list[models.Paper],
+    files: list[models.StoredFile],
+    recipients: list[str],
+) -> dict:
+    config = get_smtp_config(db)
+    if not config or not config.host:
+        return {"ok": False, "error": "未配置SMTP信息，请先在邮件设置中配置"}
+
+    if not recipients:
+        return {"ok": False, "error": "收件人列表为空，请先添加实验室成员"}
+
+    subject = f"文献汇报通知 - {report.student_name} - {report.report_date}"
+
+    paper_lines = "\n".join(
+        f"  {i + 1}. {p.title_raw}" for i, p in enumerate(papers)
+    )
+    body = (
+        f"各位好，\n\n"
+        f"{report.student_name} 同学于 {report.report_date} 进行了文献汇报，"
+        f"汇报论文如下：\n\n{paper_lines}\n\n"
+        f"请查收附件中的材料。\n\n"
+        f"—— 实验室文献管理系统"
+    )
+
+    attachments = [(f.storage_path, f.original_name) for f in files]
+    return send_smtp_email(config, recipients, subject, body, attachments)
+
+
+def send_custom_email(
+    db: Session,
+    recipients: list[str],
+    subject: str,
+    body: str,
+    files: list[models.StoredFile],
+) -> dict:
+    config = get_smtp_config(db)
+    if not config or not config.host:
+        return {"ok": False, "error": "未配置SMTP信息，请先在邮件设置中配置"}
+
+    if not recipients:
+        return {"ok": False, "error": "收件人列表为空"}
+
+    attachments = [(f.storage_path, f.original_name) for f in files]
+    return send_smtp_email(config, recipients, subject, body, attachments)
