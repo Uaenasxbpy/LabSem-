@@ -1,22 +1,22 @@
 /* ===== Design System Tokens ===== */
 :root {
-  --color-primary: #0D9488;
-  --color-primary-light: #14B8A6;
-  --color-primary-pale: #CCFBF1;
+  --color-primary: #003399;
+  --color-primary-light: #1A4DB3;
+  --color-primary-pale: #E6EDF7;
   --color-on-primary: #FFFFFF;
   --color-accent: #EA580C;
   --color-accent-light: #FB923C;
   --color-accent-pale: #FFF7ED;
-  --color-background: #F0FDFA;
+  --color-background: #F5F7FA;
   --color-surface: #FFFFFF;
-  --color-foreground: #134E4A;
-  --color-foreground-secondary: #5F7A76;
-  --color-muted: #E8F1F4;
-  --color-border: #99F6E4;
-  --color-border-subtle: #D1E8E5;
+  --color-foreground: #1A2744;
+  --color-foreground-secondary: #5A6A80;
+  --color-muted: #EDF0F5;
+  --color-border: #B3C4E0;
+  --color-border-subtle: #D5DCE8;
   --color-destructive: #DC2626;
   --color-destructive-pale: #FEF2F2;
-  --color-ring: #0D9488;
+  --color-ring: #003399;
 
   --font-heading: "Crimson Pro", "Noto Serif SC", Georgia, serif;
   --font-body: "Atkinson Hyperlegible", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -85,7 +85,27 @@ body {
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-group + .nav-group {
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-group-label {
+  padding: 4px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: rgba(255, 255, 255, 0.35);
 }
 
 .nav button {
@@ -491,7 +511,25 @@ body {
   }
   .nav {
     flex-direction: row;
+    flex-wrap: wrap;
     gap: 6px;
+  }
+  .nav-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .nav-group + .nav-group {
+    padding-top: 0;
+    border-top: none;
+    padding-left: 8px;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .nav-group-label {
+    padding: 0 4px;
+    font-size: 10px;
+    letter-spacing: 0.8px;
   }
   .nav button {
     padding: 8px 12px;
@@ -594,6 +632,234 @@ body {
   padding: 0 5px;
   border-radius: 3px;
   margin-left: 2px;
+}
+
+/* ===== Lab Files ===== */
+.labfiles-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.labfiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.labfile-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color var(--transition-fast);
+}
+
+.labfile-card:hover {
+  border-color: var(--color-primary-light);
+}
+
+.labfile-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.labfile-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--color-foreground);
+  line-height: 1.3;
+}
+
+.labfile-meta {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.labfile-size,
+.labfile-uploader {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--color-muted);
+  color: var(--color-foreground-secondary);
+  white-space: nowrap;
+}
+
+.labfile-desc {
+  font-size: 13px;
+  color: var(--color-foreground-secondary);
+  line-height: 1.5;
+}
+
+.labfile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.labfile-tag {
+  font-size: 11px;
+}
+
+.labfile-file {
+  font-size: 12px;
+  color: var(--color-foreground-secondary);
+  padding: 6px 10px;
+  background: var(--color-muted);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.labfile-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.labfile-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-pale);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.labfile-action-btn:hover {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.labfile-action-btn.danger {
+  color: var(--color-destructive);
+  background: var(--color-destructive-pale);
+  border-color: var(--color-destructive);
+}
+
+.labfile-action-btn.danger:hover {
+  background: var(--color-destructive);
+  color: #fff;
+}
+
+/* ===== Paper Pool ===== */
+.pool-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.pool-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.pool-link:hover {
+  text-decoration: underline;
+}
+
+/* ===== Dashboard ===== */
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--color-muted);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  text-align: center;
+}
+
+.stat-card .stat-value {
+  font-family: var(--font-heading);
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--color-primary);
+  line-height: 1.2;
+}
+
+.stat-card .stat-label {
+  font-size: 13px;
+  color: var(--color-foreground-secondary);
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 180px;
+  padding: 0 4px;
+}
+
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 0;
+}
+
+.bar-fill {
+  width: 100%;
+  max-width: 48px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: height var(--transition-normal);
+  min-height: 2px;
+}
+
+.bar-fill.primary {
+  background: var(--color-primary);
+}
+
+.bar-fill.accent {
+  background: var(--color-accent);
+}
+
+.bar-label {
+  font-size: 11px;
+  color: var(--color-foreground-secondary);
+  margin-top: 6px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 64px;
+}
+
+.bar-value {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-foreground);
+  margin-bottom: 4px;
 }
 
 @media (prefers-reduced-motion: reduce) {

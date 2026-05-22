@@ -38,6 +38,42 @@ createApp({
       nextSpeakers: [],
     });
 
+    const schedules = ref([]);
+    const scheduleLoading = ref(false);
+    const scheduleDialogVisible = ref(false);
+    const scheduleDialogMode = ref("add");
+    const scheduleForm = reactive({
+      id: null, meeting_date: "", student_name: "", topic: "",
+      meeting_format: "线下", location: "", notes: "",
+    });
+
+    const paperPool = ref([]);
+    const paperPoolLoading = ref(false);
+    const paperPoolTab = ref("available");
+    const paperPoolDialogVisible = ref(false);
+    const paperPoolDialogMode = ref("add");
+    const paperPoolForm = reactive({
+      id: null, title: "", url: "", recommended_by: "", notes: "",
+    });
+    const claimDialogVisible = ref(false);
+    const claimPaperId = ref(null);
+    const claimName = ref("");
+
+    const labFiles = ref([]);
+    const labFilesLoading = ref(false);
+    const labFilesSearch = reactive({ keyword: "", tag: "" });
+    const allTags = ref([]);
+    const labFileDialogVisible = ref(false);
+    const labFileDialogMode = ref("add");
+    const labFileForm = reactive({
+      id: null, title: "", description: "", tags: "", uploaded_by: "", file: null,
+    });
+
+    const dashboardStats = reactive({ total_reports: 0, total_papers: 0, total_members: 0, monthly_reports: 0 });
+    const dashboardByStudent = ref([]);
+    const dashboardMonthly = ref([]);
+    const dashboardLoading = ref(false);
+
     const previewVisible = ref(false);
     const previewUrl = ref("");
     const previewTitle = ref("");
@@ -96,7 +132,11 @@ createApp({
     const switchNav = (tab) => {
       activeNav.value = tab;
       if (tab === "search") searchReports();
+      if (tab === "schedule") loadSchedules();
+      if (tab === "pool") loadPaperPool();
+      if (tab === "labfiles") { loadLabFiles(); loadLabFileTags(); }
       if (tab === "logs") loadLogs();
+      if (tab === "dashboard") loadDashboard();
       if (tab === "members") loadMembers();
       if (tab === "email") loadSmtpConfig();
       if (tab === "compose") { loadMembers(); loadAllFiles(); searchReports(); loadStudents(); }
@@ -325,6 +365,359 @@ createApp({
       } finally {
         syncLoading.value = false;
       }
+    };
+
+    // ---- 组会排期 ----
+
+    const loadSchedules = async () => {
+      scheduleLoading.value = true;
+      try {
+        const resp = await fetch("/api/schedules");
+        if (!resp.ok) throw new Error("加载失败");
+        const data = await resp.json();
+        schedules.value = data.schedules || [];
+      } catch (err) {
+        ElMessage.error(err.message || "加载排期失败");
+      } finally {
+        scheduleLoading.value = false;
+      }
+    };
+
+    const openAddSchedule = () => {
+      scheduleDialogMode.value = "add";
+      scheduleForm.id = null;
+      scheduleForm.meeting_date = "";
+      scheduleForm.student_name = "";
+      scheduleForm.topic = "";
+      scheduleForm.meeting_format = "线下";
+      scheduleForm.location = "";
+      scheduleForm.notes = "";
+      scheduleDialogVisible.value = true;
+    };
+
+    const openEditSchedule = (item) => {
+      scheduleDialogMode.value = "edit";
+      scheduleForm.id = item.id;
+      scheduleForm.meeting_date = item.meeting_date;
+      scheduleForm.student_name = item.student_name;
+      scheduleForm.topic = item.topic || "";
+      scheduleForm.meeting_format = item.meeting_format;
+      scheduleForm.location = item.location || "";
+      scheduleForm.notes = item.notes || "";
+      scheduleDialogVisible.value = true;
+    };
+
+    const saveSchedule = async () => {
+      if (!safeTrim(scheduleForm.student_name)) return ElMessage.error("请填写汇报人");
+      if (!scheduleForm.meeting_date) return ElMessage.error("请选择日期");
+      const formData = new FormData();
+      formData.append("meeting_date", scheduleForm.meeting_date);
+      formData.append("student_name", safeTrim(scheduleForm.student_name));
+      formData.append("topic", safeTrim(scheduleForm.topic));
+      formData.append("meeting_format", scheduleForm.meeting_format);
+      formData.append("location", safeTrim(scheduleForm.location));
+      formData.append("notes", safeTrim(scheduleForm.notes));
+      try {
+        const url = scheduleDialogMode.value === "edit" ? `/api/schedules/${scheduleForm.id}` : "/api/schedules";
+        const method = scheduleDialogMode.value === "edit" ? "PUT" : "POST";
+        const resp = await fetch(url, { method, body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "保存失败");
+        ElMessage.success(scheduleDialogMode.value === "edit" ? "已更新" : "已创建");
+        scheduleDialogVisible.value = false;
+        await loadSchedules();
+      } catch (err) {
+        ElMessage.error(err.message || "保存失败");
+      }
+    };
+
+    const deleteSchedule = async (item) => {
+      try {
+        await ElMessageBox.confirm(`确认删除 ${item.student_name} 在 ${item.meeting_date} 的排期？`, "删除排期", { type: "warning" });
+        const resp = await fetch(`/api/schedules/${item.id}`, { method: "DELETE" });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "删除失败"); }
+        ElMessage.success("已删除");
+        await loadSchedules();
+      } catch (err) {
+        if (String(err).includes("cancel") || String(err).includes("close")) return;
+        ElMessage.error(err.message || "删除失败");
+      }
+    };
+
+    const updateScheduleStatus = async (item, status) => {
+      try {
+        const formData = new FormData();
+        formData.append("status", status);
+        const resp = await fetch(`/api/schedules/${item.id}/status`, { method: "PUT", body: formData });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "操作失败"); }
+        ElMessage.success("状态已更新");
+        await loadSchedules();
+      } catch (err) {
+        ElMessage.error(err.message || "操作失败");
+      }
+    };
+
+    const scheduleStatusLabel = (status) => {
+      if (status === "upcoming") return "待进行";
+      if (status === "completed") return "已完成";
+      if (status === "cancelled") return "已取消";
+      return status;
+    };
+
+    const scheduleStatusType = (status) => {
+      if (status === "upcoming") return "primary";
+      if (status === "completed") return "success";
+      if (status === "cancelled") return "info";
+      return "";
+    };
+
+    // ---- 论文推荐池 ----
+
+    const loadPaperPool = async (tab) => {
+      if (tab) paperPoolTab.value = tab;
+      paperPoolLoading.value = true;
+      try {
+        const resp = await fetch(`/api/paper-pool?status=${paperPoolTab.value}`);
+        if (!resp.ok) throw new Error("加载失败");
+        const data = await resp.json();
+        paperPool.value = data.papers || [];
+      } catch (err) {
+        ElMessage.error(err.message || "加载论文池失败");
+      } finally {
+        paperPoolLoading.value = false;
+      }
+    };
+
+    const openAddPaperPool = () => {
+      paperPoolDialogMode.value = "add";
+      paperPoolForm.id = null;
+      paperPoolForm.title = "";
+      paperPoolForm.url = "";
+      paperPoolForm.recommended_by = "";
+      paperPoolForm.notes = "";
+      paperPoolDialogVisible.value = true;
+    };
+
+    const openEditPaperPool = (item) => {
+      paperPoolDialogMode.value = "edit";
+      paperPoolForm.id = item.id;
+      paperPoolForm.title = item.title;
+      paperPoolForm.url = item.url || "";
+      paperPoolForm.recommended_by = item.recommended_by;
+      paperPoolForm.notes = item.notes || "";
+      paperPoolDialogVisible.value = true;
+    };
+
+    const savePaperPool = async () => {
+      if (!safeTrim(paperPoolForm.title)) return ElMessage.error("请填写论文标题");
+      if (!safeTrim(paperPoolForm.recommended_by)) return ElMessage.error("请填写推荐人");
+      const formData = new FormData();
+      formData.append("title", safeTrim(paperPoolForm.title));
+      formData.append("url", safeTrim(paperPoolForm.url));
+      formData.append("recommended_by", safeTrim(paperPoolForm.recommended_by));
+      formData.append("notes", safeTrim(paperPoolForm.notes));
+      try {
+        const url = paperPoolDialogMode.value === "edit" ? `/api/paper-pool/${paperPoolForm.id}` : "/api/paper-pool";
+        const method = paperPoolDialogMode.value === "edit" ? "PUT" : "POST";
+        const resp = await fetch(url, { method, body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "保存失败");
+        ElMessage.success(paperPoolDialogMode.value === "edit" ? "已更新" : "已推荐");
+        paperPoolDialogVisible.value = false;
+        await loadPaperPool();
+      } catch (err) {
+        ElMessage.error(err.message || "保存失败");
+      }
+    };
+
+    const deletePaperPool = async (item) => {
+      try {
+        await ElMessageBox.confirm(`确认删除论文「${item.title}」？`, "删除论文", { type: "warning" });
+        const resp = await fetch(`/api/paper-pool/${item.id}`, { method: "DELETE" });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "删除失败"); }
+        ElMessage.success("已删除");
+        await loadPaperPool();
+      } catch (err) {
+        if (String(err).includes("cancel") || String(err).includes("close")) return;
+        ElMessage.error(err.message || "删除失败");
+      }
+    };
+
+    const openClaimDialog = (paperId) => {
+      claimPaperId.value = paperId;
+      claimName.value = "";
+      claimDialogVisible.value = true;
+    };
+
+    const confirmClaim = async () => {
+      if (!safeTrim(claimName.value)) return ElMessage.error("请填写你的姓名");
+      try {
+        const formData = new FormData();
+        formData.append("claimed_by", safeTrim(claimName.value));
+        const resp = await fetch(`/api/paper-pool/${claimPaperId.value}/claim`, { method: "PUT", body: formData });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "认领失败"); }
+        ElMessage.success("认领成功");
+        claimDialogVisible.value = false;
+        await loadPaperPool();
+      } catch (err) {
+        ElMessage.error(err.message || "认领失败");
+      }
+    };
+
+    const unclaimPaper = async (item) => {
+      try {
+        const resp = await fetch(`/api/paper-pool/${item.id}/unclaim`, { method: "PUT" });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "取消失败"); }
+        ElMessage.success("已取消认领");
+        await loadPaperPool();
+      } catch (err) {
+        ElMessage.error(err.message || "取消失败");
+      }
+    };
+
+    const poolStatusLabel = (status) => {
+      if (status === "available") return "待认领";
+      if (status === "claimed") return "已认领";
+      if (status === "presented") return "已汇报";
+      return status;
+    };
+
+    const poolStatusType = (status) => {
+      if (status === "available") return "warning";
+      if (status === "claimed") return "primary";
+      if (status === "presented") return "success";
+      return "";
+    };
+
+    // ---- 数据看板 ----
+
+    const loadDashboard = async () => {
+      dashboardLoading.value = true;
+      try {
+        const [statsResp, studentResp, monthlyResp] = await Promise.all([
+          fetch("/api/dashboard/stats"),
+          fetch("/api/dashboard/by-student"),
+          fetch("/api/dashboard/monthly"),
+        ]);
+        if (statsResp.ok) {
+          const s = await statsResp.json();
+          Object.assign(dashboardStats, s);
+        }
+        if (studentResp.ok) dashboardByStudent.value = await studentResp.json();
+        if (monthlyResp.ok) dashboardMonthly.value = await monthlyResp.json();
+      } catch (err) {
+        ElMessage.error("加载看板数据失败");
+      } finally {
+        dashboardLoading.value = false;
+      }
+    };
+
+    const maxStudentReportCount = () => {
+      return Math.max(1, ...dashboardByStudent.value.map(s => s.report_count));
+    };
+
+    const maxMonthlyReportCount = () => {
+      return Math.max(1, ...dashboardMonthly.value.map(m => m.report_count));
+    };
+
+    const maxMonthlyPaperCount = () => {
+      return Math.max(1, ...dashboardMonthly.value.map(m => m.paper_count));
+    };
+
+    // ---- 实验室文件管理 ----
+
+    const loadLabFiles = async () => {
+      labFilesLoading.value = true;
+      try {
+        const params = new URLSearchParams();
+        const kw = safeTrim(labFilesSearch.keyword);
+        const tg = safeTrim(labFilesSearch.tag);
+        if (kw) params.append("keyword", kw);
+        if (tg) params.append("tag", tg);
+        const resp = await fetch(`/api/lab-files?${params.toString()}`);
+        if (!resp.ok) throw new Error("加载失败");
+        const data = await resp.json();
+        labFiles.value = data.files || [];
+      } catch (err) {
+        ElMessage.error(err.message || "加载文件失败");
+      } finally {
+        labFilesLoading.value = false;
+      }
+    };
+
+    const loadLabFileTags = async () => {
+      try {
+        const resp = await fetch("/api/lab-files/tags");
+        if (resp.ok) allTags.value = await resp.json();
+      } catch {}
+    };
+
+    const openAddLabFile = () => {
+      labFileDialogMode.value = "add";
+      labFileForm.id = null;
+      labFileForm.title = "";
+      labFileForm.description = "";
+      labFileForm.tags = "";
+      labFileForm.uploaded_by = "";
+      labFileForm.file = null;
+      labFileDialogVisible.value = true;
+    };
+
+    const openEditLabFile = (item) => {
+      labFileDialogMode.value = "edit";
+      labFileForm.id = item.id;
+      labFileForm.title = item.title;
+      labFileForm.description = item.description || "";
+      labFileForm.tags = item.tags || "";
+      labFileForm.uploaded_by = item.uploaded_by || "";
+      labFileForm.file = null;
+      labFileDialogVisible.value = true;
+    };
+
+    const onLabFileChange = (file) => {
+      labFileForm.file = file.raw || null;
+    };
+
+    const saveLabFile = async () => {
+      if (!safeTrim(labFileForm.title)) return ElMessage.error("请填写文件标题");
+      if (labFileDialogMode.value === "add" && !labFileForm.file) return ElMessage.error("请选择文件");
+      const formData = new FormData();
+      formData.append("title", safeTrim(labFileForm.title));
+      formData.append("description", safeTrim(labFileForm.description));
+      formData.append("tags", safeTrim(labFileForm.tags));
+      formData.append("uploaded_by", safeTrim(labFileForm.uploaded_by));
+      if (labFileForm.file) formData.append("file", labFileForm.file);
+      try {
+        const url = labFileDialogMode.value === "edit" ? `/api/lab-files/${labFileForm.id}` : "/api/lab-files";
+        const method = labFileDialogMode.value === "edit" ? "PUT" : "POST";
+        const resp = await fetch(url, { method, body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "保存失败");
+        ElMessage.success(labFileDialogMode.value === "edit" ? "已更新" : "已上传");
+        labFileDialogVisible.value = false;
+        await loadLabFiles();
+        await loadLabFileTags();
+      } catch (err) {
+        ElMessage.error(err.message || "保存失败");
+      }
+    };
+
+    const deleteLabFile = async (item) => {
+      try {
+        await ElMessageBox.confirm(`确认删除文件「${item.title}」？`, "删除文件", { type: "warning" });
+        const resp = await fetch(`/api/lab-files/${item.id}`, { method: "DELETE" });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.detail || "删除失败"); }
+        ElMessage.success("已删除");
+        await loadLabFiles();
+      } catch (err) {
+        if (String(err).includes("cancel") || String(err).includes("close")) return;
+        ElMessage.error(err.message || "删除失败");
+      }
+    };
+
+    const tagsList = (tagsStr) => {
+      if (!tagsStr) return [];
+      return tagsStr.split(",").map(t => t.trim()).filter(Boolean);
     };
 
     // ---- 成员管理 ----
@@ -597,6 +990,60 @@ ${nextLine}
       confirmDeleteReport,
       cleanupStaleFiles,
       syncUploads,
+      schedules,
+      scheduleLoading,
+      scheduleDialogVisible,
+      scheduleDialogMode,
+      scheduleForm,
+      openAddSchedule,
+      openEditSchedule,
+      saveSchedule,
+      deleteSchedule,
+      updateScheduleStatus,
+      scheduleStatusLabel,
+      scheduleStatusType,
+      paperPool,
+      paperPoolLoading,
+      paperPoolTab,
+      paperPoolDialogVisible,
+      paperPoolDialogMode,
+      paperPoolForm,
+      claimDialogVisible,
+      claimPaperId,
+      claimName,
+      openAddPaperPool,
+      openEditPaperPool,
+      savePaperPool,
+      deletePaperPool,
+      openClaimDialog,
+      confirmClaim,
+      unclaimPaper,
+      poolStatusLabel,
+      poolStatusType,
+      loadPaperPool,
+      dashboardStats,
+      dashboardByStudent,
+      dashboardMonthly,
+      dashboardLoading,
+      loadDashboard,
+      maxStudentReportCount,
+      maxMonthlyReportCount,
+      maxMonthlyPaperCount,
+      labFiles,
+      labFilesLoading,
+      labFilesSearch,
+      allTags,
+      labFileDialogVisible,
+      labFileDialogMode,
+      labFileForm,
+      openAddLabFile,
+      openEditLabFile,
+      onLabFileChange,
+      saveLabFile,
+      deleteLabFile,
+      loadLabFiles,
+      loadLabFileTags,
+      tagsList,
       paperPdfFile,
       reportPptFile,
       iconSvg,
@@ -635,30 +1082,52 @@ ${nextLine}
           <p>实验室内部使用</p>
         </div>
         <div class="nav">
-          <button :class="{ active: activeNav === 'upload' }" @click="switchNav('upload')">
-            <span class="icon" v-html="iconSvg('upload')"></span>
-            <span class="label">文献上传</span>
-          </button>
-          <button :class="{ active: activeNav === 'search' }" @click="switchNav('search')">
-            <span class="icon" v-html="iconSvg('search')"></span>
-            <span class="label">检索浏览</span>
-          </button>
-          <button :class="{ active: activeNav === 'logs' }" @click="switchNav('logs')">
-            <span class="icon" v-html="iconSvg('log')"></span>
-            <span class="label">访问日志</span>
-          </button>
-          <button :class="{ active: activeNav === 'members' }" @click="switchNav('members')">
-            <span class="icon" v-html="iconSvg('user')"></span>
-            <span class="label">成员管理</span>
-          </button>
-          <button :class="{ active: activeNav === 'email' }" @click="switchNav('email')">
-            <span class="icon" v-html="iconSvg('mail')"></span>
-            <span class="label">邮件设置</span>
-          </button>
-          <button :class="{ active: activeNav === 'compose' }" @click="switchNav('compose')">
-            <span class="icon" v-html="iconSvg('send')"></span>
-            <span class="label">发送邮件</span>
-          </button>
+          <div class="nav-group">
+            <div class="nav-group-label">文献管理</div>
+            <button :class="{ active: activeNav === 'upload' }" @click="switchNav('upload')">
+              <span class="icon" v-html="iconSvg('upload')"></span>
+              <span class="label">文献上传</span>
+            </button>
+            <button :class="{ active: activeNav === 'search' }" @click="switchNav('search')">
+              <span class="icon" v-html="iconSvg('search')"></span>
+              <span class="label">检索浏览</span>
+            </button>
+            <button :class="{ active: activeNav === 'schedule' }" @click="switchNav('schedule')">
+              <span class="icon" v-html="iconSvg('calendar')"></span>
+              <span class="label">组会排期</span>
+            </button>
+            <button :class="{ active: activeNav === 'pool' }" @click="switchNav('pool')">
+              <span class="icon" v-html="iconSvg('file')"></span>
+              <span class="label">论文池</span>
+            </button>
+            <button :class="{ active: activeNav === 'labfiles' }" @click="switchNav('labfiles')">
+              <span class="icon" v-html="iconSvg('folder')"></span>
+              <span class="label">文件管理</span>
+            </button>
+          </div>
+          <div class="nav-group">
+            <div class="nav-group-label">邮件中心</div>
+            <button :class="{ active: activeNav === 'members' }" @click="switchNav('members')">
+              <span class="icon" v-html="iconSvg('user')"></span>
+              <span class="label">成员管理</span>
+            </button>
+            <button :class="{ active: activeNav === 'email' }" @click="switchNav('email')">
+              <span class="icon" v-html="iconSvg('mail')"></span>
+              <span class="label">邮件设置</span>
+            </button>
+            <button :class="{ active: activeNav === 'compose' }" @click="switchNav('compose')">
+              <span class="icon" v-html="iconSvg('send')"></span>
+              <span class="label">发送邮件</span>
+            </button>
+            <button :class="{ active: activeNav === 'logs' }" @click="switchNav('logs')">
+              <span class="icon" v-html="iconSvg('log')"></span>
+              <span class="label">访问日志</span>
+            </button>
+            <button :class="{ active: activeNav === 'dashboard' }" @click="switchNav('dashboard')">
+              <span class="icon" v-html="iconSvg('calendar')"></span>
+              <span class="label">数据看板</span>
+            </button>
+          </div>
         </div>
         <div class="sidebar-footer">
           实验室内部使用<br/>文献汇报管理平台
@@ -789,6 +1258,329 @@ ${nextLine}
               <span v-else style="font-size:13px;color:#999">无 PPT</span>
             </div>
           </el-card>
+        </section>
+
+        <!-- Schedule Section -->
+        <section v-if="activeNav === 'schedule'" class="panel">
+          <div class="section-header">
+            <h3>组会排期</h3>
+            <p>管理未来组会安排，指定汇报人与主题</p>
+          </div>
+          <el-button type="primary" @click="openAddSchedule" style="margin-bottom:14px">
+            <span v-html="iconSvg('calendar', 14)" style="margin-right:4px"></span>新建排期
+          </el-button>
+
+          <el-table :data="schedules" size="small" style="width:100%" v-loading="scheduleLoading">
+            <el-table-column label="日期" prop="meeting_date" width="120" />
+            <el-table-column label="汇报人" prop="student_name" width="120" />
+            <el-table-column label="主题" min-width="200">
+              <template #default="scope">
+                {{ scope.row.topic || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="形式" width="100" prop="meeting_format" />
+            <el-table-column label="地点" width="130">
+              <template #default="scope">
+                {{ scope.row.location || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="scope">
+                <el-tag :type="scheduleStatusType(scope.row.status)" size="small">
+                  {{ scheduleStatusLabel(scope.row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="260">
+              <template #default="scope">
+                <el-button link type="primary" @click="openEditSchedule(scope.row)">编辑</el-button>
+                <el-button v-if="scope.row.status === 'upcoming'" link type="success" @click="updateScheduleStatus(scope.row, 'completed')">完成</el-button>
+                <el-button v-if="scope.row.status === 'upcoming'" link type="warning" @click="updateScheduleStatus(scope.row, 'cancelled')">取消</el-button>
+                <el-button v-if="scope.row.status !== 'upcoming'" link type="primary" @click="updateScheduleStatus(scope.row, 'upcoming')">恢复</el-button>
+                <el-button link type="danger" @click="deleteSchedule(scope.row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <el-dialog v-model="scheduleDialogVisible" :title="scheduleDialogMode === 'edit' ? '编辑排期' : '新建排期'" width="520px">
+            <el-form label-width="72px">
+              <el-form-item label="日期">
+                <el-date-picker v-model="scheduleForm.meeting_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+              </el-form-item>
+              <el-form-item label="汇报人">
+                <el-select v-model="scheduleForm.student_name" filterable allow-create placeholder="选择或输入姓名" style="width:100%">
+                  <el-option v-for="s in students" :key="s" :label="s" :value="s" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="主题">
+                <el-input v-model="scheduleForm.topic" placeholder="汇报主题（可选）" />
+              </el-form-item>
+              <el-form-item label="形式">
+                <el-select v-model="scheduleForm.meeting_format" style="width:100%">
+                  <el-option label="线下" value="线下" />
+                  <el-option label="线上" value="线上" />
+                  <el-option label="线下+线上" value="线下+线上" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="地点">
+                <el-input v-model="scheduleForm.location" placeholder="如：网安楼329" />
+              </el-form-item>
+              <el-form-item label="备注">
+                <el-input v-model="scheduleForm.notes" type="textarea" :rows="2" placeholder="可选备注" />
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="scheduleDialogVisible = false">取消</el-button>
+              <el-button type="primary" @click="saveSchedule">保存</el-button>
+            </template>
+          </el-dialog>
+        </section>
+
+        <!-- Paper Pool Section -->
+        <section v-if="activeNav === 'pool'" class="panel">
+          <div class="section-header">
+            <h3>论文推荐池</h3>
+            <p>推荐好论文，组会前认领汇报主题</p>
+          </div>
+          <div class="pool-toolbar">
+            <el-radio-group v-model="paperPoolTab" @change="loadPaperPool($event)" size="small">
+              <el-radio-button value="available">待认领</el-radio-button>
+              <el-radio-button value="claimed">已认领</el-radio-button>
+              <el-radio-button value="presented">已汇报</el-radio-button>
+            </el-radio-group>
+            <el-button type="primary" size="small" @click="openAddPaperPool">
+              <span v-html="iconSvg('file', 14)" style="margin-right:4px"></span>推荐论文
+            </el-button>
+          </div>
+
+          <el-table :data="paperPool" size="small" style="width:100%" v-loading="paperPoolLoading">
+            <el-table-column label="论文标题" min-width="260">
+              <template #default="scope">
+                <a v-if="scope.row.url" :href="scope.row.url" target="_blank" class="pool-link">{{ scope.row.title }}</a>
+                <span v-else>{{ scope.row.title }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="推荐人" prop="recommended_by" width="110" />
+            <el-table-column label="认领人" width="110">
+              <template #default="scope">
+                {{ scope.row.claimed_by || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="scope">
+                <el-tag :type="poolStatusType(scope.row.status)" size="small">
+                  {{ poolStatusLabel(scope.row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="160">
+              <template #default="scope">
+                {{ scope.row.notes || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="240">
+              <template #default="scope">
+                <el-button v-if="scope.row.status === 'available'" link type="primary" @click="openClaimDialog(scope.row.id)">认领</el-button>
+                <el-button v-if="scope.row.status === 'claimed'" link type="warning" @click="unclaimPaper(scope.row)">取消认领</el-button>
+                <el-button link type="primary" @click="openEditPaperPool(scope.row)">编辑</el-button>
+                <el-button link type="danger" @click="deletePaperPool(scope.row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <!-- 推荐/编辑弹窗 -->
+          <el-dialog v-model="paperPoolDialogVisible" :title="paperPoolDialogMode === 'edit' ? '编辑论文' : '推荐论文'" width="520px">
+            <el-form label-width="72px">
+              <el-form-item label="论文标题">
+                <el-input v-model="paperPoolForm.title" placeholder="论文标题" />
+              </el-form-item>
+              <el-form-item label="链接">
+                <el-input v-model="paperPoolForm.url" placeholder="论文 URL（可选）" />
+              </el-form-item>
+              <el-form-item label="推荐人">
+                <el-select v-model="paperPoolForm.recommended_by" filterable allow-create placeholder="选择或输入姓名" style="width:100%">
+                  <el-option v-for="s in students" :key="s" :label="s" :value="s" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="推荐理由">
+                <el-input v-model="paperPoolForm.notes" type="textarea" :rows="3" placeholder="为什么推荐这篇论文？（可选）" />
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="paperPoolDialogVisible = false">取消</el-button>
+              <el-button type="primary" @click="savePaperPool">保存</el-button>
+            </template>
+          </el-dialog>
+
+          <!-- 认领弹窗 -->
+          <el-dialog v-model="claimDialogVisible" title="认领论文" width="380px">
+            <el-form label-width="56px">
+              <el-form-item label="姓名">
+                <el-select v-model="claimName" filterable allow-create placeholder="选择或输入你的姓名" style="width:100%">
+                  <el-option v-for="s in students" :key="s" :label="s" :value="s" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="claimDialogVisible = false">取消</el-button>
+              <el-button type="primary" @click="confirmClaim">确认认领</el-button>
+            </template>
+          </el-dialog>
+        </section>
+
+        <!-- Lab Files Section -->
+        <section v-if="activeNav === 'labfiles'" class="panel">
+          <div class="section-header">
+            <h3>文件管理</h3>
+            <p>管理实验室内部文件、模板和文档资源</p>
+          </div>
+
+          <div class="labfiles-toolbar">
+            <el-form inline @submit.prevent>
+              <el-form-item>
+                <el-input v-model="labFilesSearch.keyword" placeholder="搜索标题/描述" clearable style="width:200px" />
+              </el-form-item>
+              <el-form-item>
+                <el-select v-model="labFilesSearch.tag" placeholder="按标签筛选" clearable filterable style="width:160px" @change="loadLabFiles">
+                  <el-option v-for="t in allTags" :key="t" :label="t" :value="t" />
+                </el-select>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" :loading="labFilesLoading" @click="loadLabFiles">搜索</el-button>
+              </el-form-item>
+            </el-form>
+            <el-button type="primary" @click="openAddLabFile">
+              <span v-html="iconSvg('upload', 14)" style="margin-right:4px"></span>上传文件
+            </el-button>
+          </div>
+
+          <el-empty v-if="!labFiles.length && !labFilesLoading" description="暂无文件" />
+
+          <div class="labfiles-grid">
+            <div v-for="f in labFiles" :key="f.id" class="labfile-card">
+              <div class="labfile-card-header">
+                <div class="labfile-title">{{ f.title }}</div>
+                <div class="labfile-meta">
+                  <span class="labfile-size">{{ formatFileSize(f.file_size) }}</span>
+                  <span v-if="f.uploaded_by" class="labfile-uploader">{{ f.uploaded_by }}</span>
+                </div>
+              </div>
+              <div v-if="f.description" class="labfile-desc">{{ f.description }}</div>
+              <div class="labfile-tags">
+                <el-tag v-for="t in tagsList(f.tags)" :key="t" size="small" type="info" effect="plain" class="labfile-tag">{{ t }}</el-tag>
+              </div>
+              <div class="labfile-file">{{ f.original_name }}</div>
+              <div class="labfile-actions">
+                <a :href="'/api/lab-files/' + f.id + '/download'" class="labfile-action-btn">
+                  <span v-html="iconSvg('download', 13)"></span> 下载
+                </a>
+                <a :href="'/api/lab-files/' + f.id + '/preview'" target="_blank" class="labfile-action-btn">
+                  <span v-html="iconSvg('eye', 13)"></span> 预览
+                </a>
+                <button class="labfile-action-btn" @click="openEditLabFile(f)">
+                  <span v-html="iconSvg('file', 13)"></span> 编辑
+                </button>
+                <button class="labfile-action-btn danger" @click="deleteLabFile(f)">
+                  <span v-html="iconSvg('trash', 13)"></span> 删除
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 上传/编辑弹窗 -->
+          <el-dialog v-model="labFileDialogVisible" :title="labFileDialogMode === 'edit' ? '编辑文件信息' : '上传文件'" width="520px">
+            <el-form label-width="72px">
+              <el-form-item label="标题">
+                <el-input v-model="labFileForm.title" placeholder="文件标题" />
+              </el-form-item>
+              <el-form-item label="描述">
+                <el-input v-model="labFileForm.description" type="textarea" :rows="2" placeholder="文件描述（可选）" />
+              </el-form-item>
+              <el-form-item label="标签">
+                <el-input v-model="labFileForm.tags" placeholder="多个标签用逗号分隔，如：模板,Word,开题报告" />
+              </el-form-item>
+              <el-form-item label="上传人">
+                <el-select v-model="labFileForm.uploaded_by" filterable allow-create clearable placeholder="选择或输入姓名" style="width:100%">
+                  <el-option v-for="s in students" :key="s" :label="s" :value="s" />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="labFileDialogMode === 'add'" label="选择文件">
+                <el-upload :auto-upload="false" :limit="1" :on-change="onLabFileChange" :on-remove="() => labFileForm.file = null">
+                  <el-button plain>选择文件</el-button>
+                </el-upload>
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="labFileDialogVisible = false">取消</el-button>
+              <el-button type="primary" @click="saveLabFile">保存</el-button>
+            </template>
+          </el-dialog>
+        </section>
+
+        <!-- Dashboard Section -->
+        <section v-if="activeNav === 'dashboard'" class="panel">
+          <div class="section-header">
+            <h3>数据看板</h3>
+            <p>组会数据统计与趋势分析</p>
+          </div>
+
+          <div class="dashboard-stats" v-loading="dashboardLoading">
+            <div class="stat-card">
+              <div class="stat-value">{{ dashboardStats.total_reports }}</div>
+              <div class="stat-label">总汇报次数</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ dashboardStats.total_papers }}</div>
+              <div class="stat-label">总论文数量</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ dashboardStats.total_members }}</div>
+              <div class="stat-label">实验室成员</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ dashboardStats.monthly_reports }}</div>
+              <div class="stat-label">本月汇报</div>
+            </div>
+          </div>
+
+          <el-row :gutter="20">
+            <el-col :xs="24" :md="12">
+              <div class="section-header" style="margin-top:8px">
+                <h3>学生排行榜</h3>
+                <p>按汇报次数排序</p>
+              </div>
+              <div v-if="dashboardByStudent.length" class="bar-chart">
+                <div v-for="s in dashboardByStudent" :key="s.student_name" class="bar-col">
+                  <div class="bar-value">{{ s.report_count }}</div>
+                  <div class="bar-fill primary" :style="{ height: (s.report_count / maxStudentReportCount() * 100) + '%' }"></div>
+                  <div class="bar-label">{{ s.student_name }}</div>
+                </div>
+              </div>
+              <el-empty v-else description="暂无数据" :image-size="48" />
+            </el-col>
+            <el-col :xs="24" :md="12">
+              <div class="section-header" style="margin-top:8px">
+                <h3>月度趋势</h3>
+                <p>近 12 个月汇报与论文数量</p>
+              </div>
+              <div v-if="dashboardMonthly.length" class="bar-chart">
+                <div v-for="m in dashboardMonthly" :key="m.month" class="bar-col">
+                  <div class="bar-value">{{ m.report_count }}</div>
+                  <div class="bar-fill primary" :style="{ height: (m.report_count / maxMonthlyReportCount() * 100) + '%' }"></div>
+                  <div class="bar-label">{{ m.month.slice(5) }}</div>
+                </div>
+              </div>
+              <el-empty v-else description="暂无数据" :image-size="48" />
+            </el-col>
+          </el-row>
+
+          <div v-if="dashboardByStudent.length" style="margin-top:20px">
+            <el-table :data="dashboardByStudent" size="small" style="width:100%">
+              <el-table-column label="学生" prop="student_name" />
+              <el-table-column label="汇报次数" prop="report_count" width="120" />
+              <el-table-column label="论文数量" prop="paper_count" width="120" />
+            </el-table>
+          </div>
         </section>
 
         <!-- Logs Section -->

@@ -9,12 +9,12 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import Base, engine, get_db
-from app.models import AccessLog, Member, Paper, Report, SmtpConfig, StoredFile, Student
-from app.schemas import AccessLogOut, MemberOut, MembersOut, ReportOut, SmtpConfigOut, StudentsOut
+from app.models import AccessLog, LabFile, Member, Paper, PaperPool, Report, Schedule, SmtpConfig, StoredFile, Student
+from app.schemas import AccessLogOut, LabFileOut, LabFilesOut, MemberOut, MembersOut, PaperPoolListOut, PaperPoolOut, ReportOut, ScheduleOut, SchedulesOut, SmtpConfigOut, StudentsOut
 from app.services import (
     create_unique_report_folder,
     decode_password,
@@ -205,6 +205,188 @@ def search_reports(
 
     results = query.order_by(Report.report_date.desc(), Report.id.desc()).limit(limit).all()
     return results
+
+
+# ---- 组会排期 ----
+
+@app.get("/api/schedules", response_model=SchedulesOut)
+def list_schedules(
+    status: str | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Schedule)
+    if status:
+        query = query.filter(Schedule.status == status)
+    if start_date:
+        query = query.filter(Schedule.meeting_date >= start_date)
+    if end_date:
+        query = query.filter(Schedule.meeting_date <= end_date)
+    rows = query.order_by(Schedule.meeting_date.desc(), Schedule.id.desc()).all()
+    return {"schedules": rows}
+
+
+@app.post("/api/schedules", response_model=ScheduleOut)
+def create_schedule(
+    meeting_date: date = Form(...),
+    student_name: str = Form(..., min_length=1),
+    topic: str = Form(default=""),
+    meeting_format: str = Form(default="线下"),
+    location: str = Form(default=""),
+    notes: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    schedule = Schedule(
+        meeting_date=meeting_date,
+        student_name=student_name.strip(),
+        topic=topic.strip() or None,
+        meeting_format=meeting_format,
+        location=location.strip(),
+        notes=notes.strip() or None,
+    )
+    db.add(schedule)
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+@app.put("/api/schedules/{schedule_id}", response_model=ScheduleOut)
+def update_schedule(
+    schedule_id: int,
+    meeting_date: date = Form(...),
+    student_name: str = Form(..., min_length=1),
+    topic: str = Form(default=""),
+    meeting_format: str = Form(default="线下"),
+    location: str = Form(default=""),
+    notes: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="排期不存在")
+    schedule.meeting_date = meeting_date
+    schedule.student_name = student_name.strip()
+    schedule.topic = topic.strip() or None
+    schedule.meeting_format = meeting_format
+    schedule.location = location.strip()
+    schedule.notes = notes.strip() or None
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+@app.delete("/api/schedules/{schedule_id}")
+def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="排期不存在")
+    db.delete(schedule)
+    db.commit()
+    return {"ok": True}
+
+
+@app.put("/api/schedules/{schedule_id}/status")
+def update_schedule_status(schedule_id: int, status: str = Form(...), db: Session = Depends(get_db)):
+    if status not in ("upcoming", "completed", "cancelled"):
+        raise HTTPException(status_code=400, detail="无效状态")
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="排期不存在")
+    schedule.status = status
+    db.commit()
+    return {"ok": True, "status": status}
+
+
+# ---- 论文推荐池 ----
+
+@app.get("/api/paper-pool", response_model=PaperPoolListOut)
+def list_paper_pool(
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(PaperPool)
+    if status:
+        query = query.filter(PaperPool.status == status)
+    rows = query.order_by(PaperPool.created_at.desc()).all()
+    return {"papers": rows}
+
+
+@app.post("/api/paper-pool", response_model=PaperPoolOut)
+def create_paper_pool(
+    title: str = Form(..., min_length=1),
+    url: str = Form(default=""),
+    recommended_by: str = Form(..., min_length=1),
+    notes: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    paper = PaperPool(
+        title=title.strip(),
+        url=url.strip() or None,
+        recommended_by=recommended_by.strip(),
+        notes=notes.strip() or None,
+    )
+    db.add(paper)
+    db.commit()
+    db.refresh(paper)
+    return paper
+
+
+@app.put("/api/paper-pool/{paper_id}", response_model=PaperPoolOut)
+def update_paper_pool(
+    paper_id: int,
+    title: str = Form(..., min_length=1),
+    url: str = Form(default=""),
+    recommended_by: str = Form(..., min_length=1),
+    notes: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    paper = db.query(PaperPool).filter(PaperPool.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    paper.title = title.strip()
+    paper.url = url.strip() or None
+    paper.recommended_by = recommended_by.strip()
+    paper.notes = notes.strip() or None
+    db.commit()
+    db.refresh(paper)
+    return paper
+
+
+@app.delete("/api/paper-pool/{paper_id}")
+def delete_paper_pool(paper_id: int, db: Session = Depends(get_db)):
+    paper = db.query(PaperPool).filter(PaperPool.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    db.delete(paper)
+    db.commit()
+    return {"ok": True}
+
+
+@app.put("/api/paper-pool/{paper_id}/claim")
+def claim_paper(paper_id: int, claimed_by: str = Form(..., min_length=1), db: Session = Depends(get_db)):
+    paper = db.query(PaperPool).filter(PaperPool.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    if paper.status != "available":
+        raise HTTPException(status_code=400, detail="该论文已被认领")
+    paper.claimed_by = claimed_by.strip()
+    paper.status = "claimed"
+    db.commit()
+    return {"ok": True}
+
+
+@app.put("/api/paper-pool/{paper_id}/unclaim")
+def unclaim_paper(paper_id: int, db: Session = Depends(get_db)):
+    paper = db.query(PaperPool).filter(PaperPool.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    if paper.status != "claimed":
+        raise HTTPException(status_code=400, detail="该论文未被认领")
+    paper.claimed_by = None
+    paper.status = "available"
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/logs", response_model=list[AccessLogOut])
@@ -497,6 +679,215 @@ def notify_report(report_id: int, db: Session = Depends(get_db)):
     if not result["ok"]:
         raise HTTPException(status_code=500, detail=result["error"])
     return result
+
+
+# ---- 实验室文件管理 ----
+
+def _lab_files_dir() -> str:
+    root = ensure_storage_root()
+    d = root / "lab_files"
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
+@app.get("/api/lab-files/tags")
+def list_lab_file_tags(db: Session = Depends(get_db)):
+    rows = db.query(LabFile.tags).filter(LabFile.tags != "").all()
+    tag_set: set[str] = set()
+    for (tags_str,) in rows:
+        for t in tags_str.split(","):
+            t = t.strip()
+            if t:
+                tag_set.add(t)
+    return sorted(tag_set)
+
+
+@app.get("/api/lab-files", response_model=LabFilesOut)
+def list_lab_files(
+    keyword: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(LabFile)
+    if keyword:
+        kw = keyword.strip()
+        query = query.filter(
+            LabFile.title.contains(kw) | LabFile.description.contains(kw) | LabFile.tags.contains(kw)
+        )
+    if tag:
+        query = query.filter(LabFile.tags.contains(tag.strip()))
+    rows = query.order_by(LabFile.created_at.desc()).all()
+    return {"files": rows}
+
+
+@app.post("/api/lab-files", response_model=LabFileOut)
+async def upload_lab_file(
+    title: str = Form(..., min_length=1),
+    description: str = Form(default=""),
+    tags: str = Form(default=""),
+    uploaded_by: str = Form(default=""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    file_hash = digest_bytes(content)
+    storage_name = f"{file_hash[:12]}_{file.filename}"
+    target_dir = _lab_files_dir()
+    storage_path = os.path.join(target_dir, storage_name)
+    with open(storage_path, "wb") as f:
+        f.write(content)
+
+    lab_file = LabFile(
+        title=title.strip(),
+        description=description.strip() or None,
+        tags=tags.strip(),
+        original_name=file.filename or storage_name,
+        storage_name=storage_name,
+        storage_path=storage_path,
+        file_size=len(content),
+        file_hash=file_hash,
+        uploaded_by=uploaded_by.strip() or None,
+    )
+    db.add(lab_file)
+    db.commit()
+    db.refresh(lab_file)
+    return lab_file
+
+
+@app.put("/api/lab-files/{file_id}", response_model=LabFileOut)
+def update_lab_file(
+    file_id: int,
+    title: str = Form(..., min_length=1),
+    description: str = Form(default=""),
+    tags: str = Form(default=""),
+    uploaded_by: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    lab_file = db.query(LabFile).filter(LabFile.id == file_id).first()
+    if not lab_file:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    lab_file.title = title.strip()
+    lab_file.description = description.strip() or None
+    lab_file.tags = tags.strip()
+    lab_file.uploaded_by = uploaded_by.strip() or None
+    db.commit()
+    db.refresh(lab_file)
+    return lab_file
+
+
+@app.delete("/api/lab-files/{file_id}")
+def delete_lab_file(file_id: int, db: Session = Depends(get_db)):
+    lab_file = db.query(LabFile).filter(LabFile.id == file_id).first()
+    if not lab_file:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if os.path.exists(lab_file.storage_path):
+        os.remove(lab_file.storage_path)
+    db.delete(lab_file)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/lab-files/{file_id}/download")
+def download_lab_file(file_id: int, db: Session = Depends(get_db)):
+    lab_file = db.query(LabFile).filter(LabFile.id == file_id).first()
+    if not lab_file:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if not os.path.exists(lab_file.storage_path):
+        db.delete(lab_file)
+        db.commit()
+        raise HTTPException(status_code=404, detail="文件已不存在，记录已自动清理")
+    return FileResponse(lab_file.storage_path, filename=lab_file.original_name)
+
+
+@app.get("/api/lab-files/{file_id}/preview")
+def preview_lab_file(file_id: int, db: Session = Depends(get_db)):
+    lab_file = db.query(LabFile).filter(LabFile.id == file_id).first()
+    if not lab_file:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if not os.path.exists(lab_file.storage_path):
+        db.delete(lab_file)
+        db.commit()
+        raise HTTPException(status_code=404, detail="文件已不存在，记录已自动清理")
+    media_type, _ = mimetypes.guess_type(lab_file.original_name)
+    return FileResponse(
+        lab_file.storage_path,
+        media_type=media_type or "application/octet-stream",
+        filename=lab_file.original_name,
+        content_disposition_type="inline",
+    )
+
+
+# ---- 数据统计看板 ----
+
+@app.get("/api/dashboard/stats")
+def dashboard_stats(db: Session = Depends(get_db)):
+    total_reports = db.query(func.count(Report.id)).scalar() or 0
+    total_papers = db.query(func.count(Paper.id)).scalar() or 0
+    total_members = db.query(func.count(Member.id)).scalar() or 0
+
+    today = date.today()
+    month_start = today.replace(day=1)
+    monthly_reports = (
+        db.query(func.count(Report.id))
+        .filter(Report.report_date >= month_start)
+        .scalar() or 0
+    )
+
+    return {
+        "total_reports": total_reports,
+        "total_papers": total_papers,
+        "total_members": total_members,
+        "monthly_reports": monthly_reports,
+    }
+
+
+@app.get("/api/dashboard/by-student")
+def dashboard_by_student(db: Session = Depends(get_db)):
+    rows = (
+        db.query(
+            Report.student_name,
+            func.count(Report.id).label("report_count"),
+        )
+        .group_by(Report.student_name)
+        .order_by(func.count(Report.id).desc())
+        .all()
+    )
+    result = []
+    for name, count in rows:
+        paper_count = (
+            db.query(func.count(Paper.id))
+            .join(Report, Paper.report_id == Report.id)
+            .filter(Report.student_name == name)
+            .scalar() or 0
+        )
+        result.append({"student_name": name, "report_count": count, "paper_count": paper_count})
+    return result
+
+
+@app.get("/api/dashboard/monthly")
+def dashboard_monthly(db: Session = Depends(get_db)):
+    rows = (
+        db.query(
+            func.strftime("%Y-%m", Report.report_date).label("month"),
+            func.count(Report.id).label("report_count"),
+        )
+        .group_by("month")
+        .order_by("month")
+        .all()
+    )
+    result = []
+    for month, count in rows:
+        paper_count = (
+            db.query(func.count(Paper.id))
+            .join(Report, Paper.report_id == Report.id)
+            .filter(func.strftime("%Y-%m", Report.report_date) == month)
+            .scalar() or 0
+        )
+        result.append({"month": month, "report_count": count, "paper_count": paper_count})
+    return result[-12:]  # 最近 12 个月
 
 
 # ---- 文件列表（用于附件选择） ----

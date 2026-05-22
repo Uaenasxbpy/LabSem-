@@ -350,4 +350,3 @@ def send_custom_email(
 
     _cleanup_temp_dirs(temp_dirs)
     return {"ok": True, "message": f"已成功发送给 {len(recipients)} 位成员（共 {len(batches)} 封邮件）"}
-    return send_smtp_email(config, recipients, subject, body, attachments)

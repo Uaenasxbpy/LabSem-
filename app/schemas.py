@@ -93,3 +93,59 @@ class SmtpConfigOut(BaseModel):
     password_masked: str
     sender_name: str
     use_tls: bool
+
+
+class ScheduleOut(BaseModel):
+    id: int
+    meeting_date: date
+    student_name: str
+    topic: str | None
+    meeting_format: str
+    location: str
+    status: str
+    notes: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchedulesOut(BaseModel):
+    schedules: list[ScheduleOut]
+
+
+class PaperPoolOut(BaseModel):
+    id: int
+    title: str
+    url: str | None
+    recommended_by: str
+    claimed_by: str | None
+    status: str
+    report_id: int | None
+    notes: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaperPoolListOut(BaseModel):
+    papers: list[PaperPoolOut]
+
+
+class LabFileOut(BaseModel):
+    id: int
+    title: str
+    description: str | None
+    tags: str
+    original_name: str
+    file_size: int
+    uploaded_by: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LabFilesOut(BaseModel):
+    files: list[LabFileOut]

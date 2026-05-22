@@ -97,6 +97,52 @@ class Member(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Schedule(Base):
+    __tablename__ = "schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    meeting_date: Mapped[date] = mapped_column(Date, index=True)
+    student_name: Mapped[str] = mapped_column(String(128), index=True)
+    topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    meeting_format: Mapped[str] = mapped_column(String(32), default="线下")
+    location: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(32), default="upcoming", index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PaperPool(Base):
+    __tablename__ = "paper_pool"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    recommended_by: Mapped[str] = mapped_column(String(128), index=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="available", index=True)
+    report_id: Mapped[int | None] = mapped_column(
+        ForeignKey("reports.id", ondelete="SET NULL"), nullable=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class LabFile(Base):
+    __tablename__ = "lab_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[str] = mapped_column(String(512), default="")
+    original_name: Mapped[str] = mapped_column(String(255))
+    storage_name: Mapped[str] = mapped_column(String(255))
+    storage_path: Mapped[str] = mapped_column(String(1024))
+    file_size: Mapped[int] = mapped_column(default=0)
+    file_hash: Mapped[str] = mapped_column(String(64), default="")
+    uploaded_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class SmtpConfig(Base):
     __tablename__ = "smtp_config"
 
