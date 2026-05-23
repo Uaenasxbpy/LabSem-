@@ -1,0 +1,29 @@
+:root {
+  --color-primary: #003399;
+  --color-primary-light: #1A4DB3;
+  --color-primary-pale: #E6EDF7;
+  --color-on-primary: #FFFFFF;
+  --color-accent: #EA580C;
+  --color-accent-light: #FB923C;
+  --color-accent-pale: #FFF7ED;
+  --color-background: #F5F7FA;
+  --color-surface: #FFFFFF;
+  --color-foreground: #1A2744;
+  --color-foreground-secondary: #5A6A80;
+  --color-muted: #EDF0F5;
+  --color-border: #B3C4E0;
+  --color-border-subtle: #D5DCE8;
+  --color-destructive: #DC2626;
+  --color-destructive-pale: #FEF2F2;
+  --color-ring: #003399;
+
+  --font-heading: "Crimson Pro", "Noto Serif SC", Georgia, serif;
+  --font-body: "Atkinson Hyperlegible", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+}

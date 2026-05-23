@@ -1,15 +1,55 @@
-﻿services:
-  web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: literature_web
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: labsem_mysql
     restart: unless-stopped
     environment:
-      DATABASE_URL: sqlite:///./data/literature.db
-      UPLOAD_DIR: /app/uploads
-    ports:
-      - "20766:8000"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-labsem123}
+      MYSQL_DATABASE: labsem
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
     volumes:
-      - ./uploads:/app/uploads
-      - ./data:/app/data
+      - mysql_data:/var/lib/mysql
+      - ./backend/src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-labsem123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: labsem_backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: mysql
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-labsem123}
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: labsem_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "20766:80"
+
+volumes:
+  mysql_data:
+  uploads:

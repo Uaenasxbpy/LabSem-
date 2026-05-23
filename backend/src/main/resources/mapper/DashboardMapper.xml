@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.labsem.mapper.DashboardMapper">
+
+    <select id="selectMonthlyReportCount" resultType="java.util.Map">
+        SELECT DATE_FORMAT(report_date, '%Y-%m') AS month,
+               COUNT(*) AS report_count
+        FROM reports
+        GROUP BY DATE_FORMAT(report_date, '%Y-%m')
+        ORDER BY month
+    </select>
+
+    <select id="selectMonthlyPaperCount" resultType="java.util.Map">
+        SELECT DATE_FORMAT(r.report_date, '%Y-%m') AS month,
+               COUNT(p.id) AS paper_count
+        FROM papers p
+        LEFT JOIN reports r ON p.report_id = r.id
+        GROUP BY DATE_FORMAT(r.report_date, '%Y-%m')
+        ORDER BY month
+    </select>
+
+    <select id="selectStudentReportCount" resultType="java.util.Map">
+        SELECT student_name,
+               COUNT(*) AS report_count
+        FROM reports
+        GROUP BY student_name
+        ORDER BY report_count DESC
+    </select>
+
+    <select id="selectStudentPaperCount" resultType="java.util.Map">
+        SELECT r.student_name,
+               COUNT(p.id) AS paper_count
+        FROM papers p
+        LEFT JOIN reports r ON p.report_id = r.id
+        GROUP BY r.student_name
+        ORDER BY paper_count DESC
+    </select>
+
+</mapper>

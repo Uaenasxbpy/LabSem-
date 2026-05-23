@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.labsem.mapper.ReportMapper">
+
+    <select id="searchByKeyword" resultType="com.labsem.entity.Report">
+        SELECT DISTINCT r.* FROM reports r
+        LEFT JOIN papers p ON p.report_id = r.id
+        WHERE (p.title_raw LIKE CONCAT('%', #{keyword}, '%')
+               OR p.title_normalized LIKE CONCAT('%', #{normalizedKeyword}, '%'))
+        ORDER BY r.report_date DESC, r.id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>
