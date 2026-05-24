@@ -95,7 +95,7 @@ public class LabFileService {
     public LabFile update(Long fileId, String title, String description, String tags, String uploadedBy) {
         LabFile labFile = labFileMapper.selectById(fileId);
         if (labFile == null) {
-            throw new BusinessException.notFound("文件不存在");
+            throw BusinessException.notFound("文件不存在");
         }
         labFile.setTitle(title.trim());
         labFile.setDescription(description != null && !description.trim().isEmpty() ? description.trim() : null);
@@ -111,7 +111,7 @@ public class LabFileService {
     public void delete(Long fileId) {
         LabFile labFile = labFileMapper.selectById(fileId);
         if (labFile == null) {
-            throw new BusinessException.notFound("文件不存在");
+            throw BusinessException.notFound("文件不存在");
         }
         fileStorageService.deleteFile(labFile.getStoragePath());
         labFileMapper.deleteById(fileId);
@@ -123,11 +123,11 @@ public class LabFileService {
     public LabFile getForDownload(Long fileId) {
         LabFile labFile = labFileMapper.selectById(fileId);
         if (labFile == null) {
-            throw new BusinessException.notFound("文件不存在");
+            throw BusinessException.notFound("文件不存在");
         }
         if (!Files.exists(Paths.get(labFile.getStoragePath()))) {
             labFileMapper.deleteById(fileId);
-            throw new BusinessException.notFound("文件已不存在，记录已自动清理");
+            throw BusinessException.notFound("文件已不存在，记录已自动清理");
         }
         return labFile;
     }

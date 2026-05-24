@@ -1,6 +1,7 @@
 package com.labsem.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.labsem.common.util.IpUtil;
 import com.labsem.entity.Paper;
 import com.labsem.entity.Report;
 import com.labsem.entity.StoredFile;
@@ -8,6 +9,7 @@ import com.labsem.mapper.PaperMapper;
 import com.labsem.mapper.ReportMapper;
 import com.labsem.mapper.StoredFileMapper;
 import com.labsem.service.AccessLogService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -82,7 +84,7 @@ public class FileController {
     @GetMapping("/api/files/{id}/preview")
     public ResponseEntity<Resource> preview(
             @PathVariable Long id,
-            @RequestParam(value = "ip", required = false) String ip
+            HttpServletRequest request
     ) {
         StoredFile file = storedFileMapper.selectById(id);
         if (file == null) {
@@ -92,11 +94,7 @@ public class FileController {
             return ResponseEntity.notFound().build();
         }
 
-        // Resolve report/paper info for logging
-        Report report = file.getReportId() != null ? reportMapper.selectById(file.getReportId()) : null;
-        Paper paper = file.getPaperId() != null ? paperMapper.selectById(file.getPaperId()) : null;
-
-        accessLogService.log(ip, "preview", file);
+        accessLogService.log(IpUtil.getClientIp(request), "preview", file);
 
         Resource resource = new FileSystemResource(file.getStoragePath());
         MediaType mediaType = resolveMediaType(file.getOriginalName());
@@ -114,7 +112,7 @@ public class FileController {
     @GetMapping("/api/files/{id}/download")
     public ResponseEntity<Resource> download(
             @PathVariable Long id,
-            @RequestParam(value = "ip", required = false) String ip
+            HttpServletRequest request
     ) {
         StoredFile file = storedFileMapper.selectById(id);
         if (file == null) {
@@ -124,7 +122,7 @@ public class FileController {
             return ResponseEntity.notFound().build();
         }
 
-        accessLogService.log(ip, "download", file);
+        accessLogService.log(IpUtil.getClientIp(request), "download", file);
 
         Resource resource = new FileSystemResource(file.getStoragePath());
         String encodedName = URLEncoder.encode(file.getOriginalName(), StandardCharsets.UTF_8).replace("+", "%20");

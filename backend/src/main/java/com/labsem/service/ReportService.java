@@ -249,7 +249,7 @@ public class ReportService {
     public void deleteReport(Long reportId) {
         Report report = reportMapper.selectById(reportId);
         if (report == null) {
-            throw new BusinessException.notFound("汇报记录不存在");
+            throw BusinessException.notFound("汇报记录不存在");
         }
 
         // Delete physical files

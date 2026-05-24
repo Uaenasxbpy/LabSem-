@@ -48,7 +48,7 @@ public class MemberService {
     public Member update(Long memberId, String name, String email) {
         Member member = memberMapper.selectById(memberId);
         if (member == null) {
-            throw new BusinessException.notFound("成员不存在");
+            throw BusinessException.notFound("成员不存在");
         }
         String normalizedEmail = email.trim().toLowerCase();
         Long count = memberMapper.selectCount(
@@ -71,7 +71,7 @@ public class MemberService {
     public void delete(Long memberId) {
         Member member = memberMapper.selectById(memberId);
         if (member == null) {
-            throw new BusinessException.notFound("成员不存在");
+            throw BusinessException.notFound("成员不存在");
         }
         memberMapper.deleteById(memberId);
     }

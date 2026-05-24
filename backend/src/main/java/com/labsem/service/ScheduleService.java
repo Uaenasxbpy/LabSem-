@@ -61,7 +61,7 @@ public class ScheduleService {
                            String meetingFormat, String location, String notes) {
         Schedule schedule = scheduleMapper.selectById(scheduleId);
         if (schedule == null) {
-            throw new BusinessException.notFound("排期不存在");
+            throw BusinessException.notFound("排期不存在");
         }
         schedule.setMeetingDate(meetingDate);
         schedule.setStudentName(studentName.trim());
@@ -79,7 +79,7 @@ public class ScheduleService {
     public void delete(Long scheduleId) {
         Schedule schedule = scheduleMapper.selectById(scheduleId);
         if (schedule == null) {
-            throw new BusinessException.notFound("排期不存在");
+            throw BusinessException.notFound("排期不存在");
         }
         scheduleMapper.deleteById(scheduleId);
     }
@@ -93,7 +93,7 @@ public class ScheduleService {
         }
         Schedule schedule = scheduleMapper.selectById(scheduleId);
         if (schedule == null) {
-            throw new BusinessException.notFound("排期不存在");
+            throw BusinessException.notFound("排期不存在");
         }
         schedule.setStatus(status);
         scheduleMapper.updateById(schedule);

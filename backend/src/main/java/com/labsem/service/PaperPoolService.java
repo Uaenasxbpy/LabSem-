@@ -47,7 +47,7 @@ public class PaperPoolService {
     public PaperPool update(Long paperId, String title, String url, String recommendedBy, String notes) {
         PaperPool paper = paperPoolMapper.selectById(paperId);
         if (paper == null) {
-            throw new BusinessException.notFound("论文不存在");
+            throw BusinessException.notFound("论文不存在");
         }
         paper.setTitle(title.trim());
         paper.setUrl(url != null && !url.trim().isEmpty() ? url.trim() : null);
@@ -63,7 +63,7 @@ public class PaperPoolService {
     public void delete(Long paperId) {
         PaperPool paper = paperPoolMapper.selectById(paperId);
         if (paper == null) {
-            throw new BusinessException.notFound("论文不存在");
+            throw BusinessException.notFound("论文不存在");
         }
         paperPoolMapper.deleteById(paperId);
     }
@@ -74,7 +74,7 @@ public class PaperPoolService {
     public void claim(Long paperId, String claimedBy) {
         PaperPool paper = paperPoolMapper.selectById(paperId);
         if (paper == null) {
-            throw new BusinessException.notFound("论文不存在");
+            throw BusinessException.notFound("论文不存在");
         }
         if (!"available".equals(paper.getStatus())) {
             throw new BusinessException(400, "该论文已被认领");
@@ -90,7 +90,7 @@ public class PaperPoolService {
     public void unclaim(Long paperId) {
         PaperPool paper = paperPoolMapper.selectById(paperId);
         if (paper == null) {
-            throw new BusinessException.notFound("论文不存在");
+            throw BusinessException.notFound("论文不存在");
         }
         if (!"claimed".equals(paper.getStatus())) {
             throw new BusinessException(400, "该论文未被认领");
